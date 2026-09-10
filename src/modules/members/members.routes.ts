@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { created, ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
 import { hashMobile } from '../../lib/crypto.js';
-import { membershipNumberFromRowId } from '../../lib/membership.js';
+import { membershipNumberFromRowId, persistMembershipNumber, stateCodeForId } from '../../lib/membership.js';
 import { parseIsoDate } from '../../lib/date.js';
 import { mediaPublicUrl, putMemberPhoto } from '../../lib/storage.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
@@ -159,7 +159,13 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
     data,
     include: memberGraph,
   });
-  return ok(res, { member: serializeMember(member) });
+  if (data.stateId) {
+    await persistMembershipNumber(member.id, member.rowId, data.stateId);
+  }
+  const fresh = data.stateId
+    ? await prisma.member.findUniqueOrThrow({ where: { id: member.id }, include: memberGraph })
+    : member;
+  return ok(res, { member: serializeMember(fresh) });
 });
 
 membersRouter.post('/photo', photoUpload.single('photo'), async (req, res) => {
@@ -227,7 +233,8 @@ membersRouter.post('/register', validate(registerSchema), async (req, res) => {
   });
   if (!required) throw badRequest('Consent document is out of date');
 
-  const membershipNumber = auth.member.membershipNumber ?? membershipNumberFromRowId(auth.member.rowId);
+  const stateId = assembly?.stateId ?? district?.stateId ?? null;
+  const membershipNumber = membershipNumberFromRowId(auth.member.rowId, await stateCodeForId(stateId));
   const member = await prisma.member.update({
     where: { id: auth.member.id },
     data: {
@@ -240,7 +247,7 @@ membersRouter.post('/register', validate(registerSchema), async (req, res) => {
       assemblyId: assembly?.id ?? booth?.assemblyId ?? null,
       districtId: district?.id ?? assembly?.districtId ?? booth?.districtId ?? null,
       regionId: district?.regionId ?? null,
-      stateId: assembly?.stateId ?? district?.stateId ?? null,
+      stateId,
       status: 'VERIFIED',
       whatsappOptIn: body.whatsappOptIn,
       membershipNumber,
@@ -262,9 +269,14 @@ membersRouter.post('/register', validate(registerSchema), async (req, res) => {
     await prisma.membershipCard.create({
       data: {
         memberId: member.id,
-        publicCode: member.membershipNumber ?? membershipNumber,
+        publicCode: membershipNumber,
         validTo: new Date('2028-03-31'),
       },
+    });
+  } else if (member.card.publicCode !== membershipNumber) {
+    await prisma.membershipCard.update({
+      where: { id: member.card.id },
+      data: { publicCode: membershipNumber },
     });
   }
 
@@ -338,9 +350,10 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
   });
   if (!required) throw badRequest('Consent document is out of date');
 
-  const membershipNumber = existing
-    ? (existing.membershipNumber ?? membershipNumberFromRowId(existing.rowId))
-    : undefined;
+  const boothDistrict = booth.districtId
+    ? await prisma.district.findFirst({ where: { id: booth.districtId }, include: { state: true } })
+    : null;
+  const recruitStateId = boothDistrict?.stateId ?? boothDistrict?.state?.id ?? null;
   const shared = {
     fullName: body.fullName,
     dateOfBirth: parseIsoDate(body.dateOfBirth),
@@ -350,6 +363,7 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
     mandalId: booth.mandalId,
     assemblyId: booth.assemblyId,
     districtId: booth.districtId,
+    stateId: recruitStateId,
     status: 'VERIFIED' as const,
     whatsappOptIn: body.whatsappOptIn,
     recruitedById: auth.member.id,
@@ -363,7 +377,6 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
         where: { id: existing.id },
         data: {
           ...shared,
-          membershipNumber,
         },
         include: recruitGraph,
       })
@@ -375,11 +388,16 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
         },
         include: recruitGraph,
       });
-  if (!member.membershipNumber) {
+  const recruitNumber = membershipNumberFromRowId(member.rowId, boothDistrict?.state?.code);
+  if (member.membershipNumber !== recruitNumber) {
     member = await prisma.member.update({
       where: { id: member.id },
-      data: { membershipNumber: membershipNumberFromRowId(member.rowId) },
+      data: { membershipNumber: recruitNumber },
       include: recruitGraph,
+    });
+    await prisma.membershipCard.updateMany({
+      where: { memberId: member.id },
+      data: { publicCode: recruitNumber },
     });
   }
 

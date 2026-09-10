@@ -3,7 +3,11 @@ import { ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { serializeMember } from '../members/member.serialize.js';
+import { issueSyncTimestamp } from '../../lib/issue-sync.js';
 import { touchLastActive } from './last-active.js';
+import { listVisibleEvents } from '../events/events.routes.js';
+import { listVisibleOrgTasks } from '../tasks/tasks.routes.js';
+import { findActiveEngagement, serializeEngagementPrompt } from '../engagement/engagement.shared.js';
 
 export const homeRouter = Router();
 homeRouter.use(requireAuth);
@@ -32,7 +36,7 @@ homeRouter.get('/', async (req, res) => {
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const mandalFilter = member.mandalId ? { mandalId: member.mandalId, deletedAt: null } : { id: member.id };
 
-  const [tasksDue, ledger, mandalMembers, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, meetingsHeld] = await Promise.all([
+  const [tasksDue, ledger, mandalMembers, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, meetingsHeld, issuesTimestamp] = await Promise.all([
     prisma.task.findMany({
       where: { assigneeId: member.id, status: { in: ['OPEN', 'IN_PROGRESS', 'OVERDUE'] } },
       include: { assigner: true },
@@ -75,7 +79,11 @@ homeRouter.get('/', async (req, res) => {
     prisma.activity.count({
       where: { actorId: member.id, type: 'MEETING', status: { in: ['VERIFIED', 'PENDING_VERIFICATION', 'QUEUED'] } },
     }),
+    issueSyncTimestamp(),
   ]);
+  const upcomingEvents = await listVisibleEvents(member, auth.auth.post, 5).catch(() => []);
+  const regionTasks = await listVisibleOrgTasks(member, 12).catch(() => []);
+  const activeEngagement = await findActiveEngagement(member.id).catch(() => null);
 
   const points = ledger.filter((e) => !e.pending).reduce((s, e) => s + (e.direction === 'CREDIT' ? e.points : -e.points), 0);
   const pendingPoints = ledger.filter((e) => e.pending && e.direction === 'CREDIT').reduce((s, e) => s + e.points, 0);
@@ -103,7 +111,8 @@ homeRouter.get('/', async (req, res) => {
 
   const weakest = [...healthComponents].sort((a, b) => a.score / a.maxScore - b.score / b.maxScore)[0];
   const lastReview = lastWork?.reviews[0];
-  const reviewerPost = lastReview?.reviewer.posts.find((p) => p.isPrimary)?.post ?? lastReview?.reviewer.posts[0]?.post ?? null;
+  const reviewerPosts = lastReview?.reviewer.posts ?? [];
+  const reviewerPost = reviewerPosts.find((p) => p.isPrimary)?.post ?? reviewerPosts[0]?.post ?? null;
 
   return ok(res, {
     greetingName: member.fullName.split(' ')[0] || 'Karyakarta',
@@ -121,13 +130,23 @@ homeRouter.get('/', async (req, res) => {
       boothWeakest: weakest?.detail ?? weakest?.label ?? null,
       pannaAppointed,
     },
-    tasksDueToday: dueToday.map((t) => ({
-      id: t.id,
-      title: t.title,
-      detail: t.detail,
-      dueAt: t.dueAt,
-      assignerName: t.assigner.fullName,
-    })),
+    tasksDueToday: [
+      ...dueToday.map((t) => ({
+        id: t.id,
+        title: t.title,
+        detail: t.detail,
+        dueAt: t.dueAt,
+        assignerName: t.assigner.fullName,
+      })),
+      ...regionTasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        detail: t.detail,
+        dueAt: t.createdAt,
+        assignerName: t.assignerName,
+      })),
+    ],
+    issuesTimestamp,
     lastActiveAt,
     lastActivity: lastWork
       ? {
@@ -145,5 +164,7 @@ homeRouter.get('/', async (req, res) => {
       place: card.placeLabel,
       imageUrl: card.imageUrl,
     })),
+    upcomingEvents,
+    engagement: activeEngagement ? serializeEngagementPrompt(activeEngagement) : null,
   });
 });

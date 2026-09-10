@@ -3,11 +3,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { created, ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
+import { issueSyncTimestamp } from '../../lib/issue-sync.js';
 import { mediaPublicUrl, putMemberPhoto } from '../../lib/storage.js';
 import { badRequest } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { postMediaFields } from '../../middleware/upload.js';
-import type { Prisma, RegionPost, RegionPostMedia } from '@prisma/client';
+import type { PostIssue, Prisma, RegionPost, RegionPostMedia } from '@prisma/client';
 
 const uuid = z.string().uuid();
 
@@ -26,18 +27,36 @@ function mediaKind(mime: string, declared?: string): RegionPostMedia {
   return 'IMAGE';
 }
 
-function serializePost(post: RegionPost & { author: { fullName: string; mobileE164: string } }) {
+function serializeIssue(issue: PostIssue) {
+  return {
+    id: issue.id,
+    code: issue.code,
+    name: issue.name,
+    nameHi: issue.nameHi,
+    nameBho: issue.nameBho,
+    priority: issue.priority,
+    band: issue.band,
+    reason: issue.reason,
+  };
+}
+
+function serializePost(
+  post: RegionPost & { author: { fullName: string; mobileE164: string }; issue: PostIssue },
+) {
   const type = post.mediaType.toLowerCase();
+  const hasMedia = Boolean(post.mediaKey);
+  const mediaUrl = hasMedia ? mediaPublicUrl(post.mediaKey) : null;
   const thumbnailUrl = post.thumbnailKey ? mediaPublicUrl(post.thumbnailKey) : null;
+  const issue = serializeIssue(post.issue);
   return {
     id: post.clientUuid,
     serverId: post.id,
     clientUuid: post.clientUuid,
     description: post.description,
     mediaType: type,
-    mediaKey: post.mediaKey,
-    mediaUrl: mediaPublicUrl(post.mediaKey),
-    mediaPath: mediaPublicUrl(post.mediaKey),
+    mediaKey: hasMedia ? post.mediaKey : null,
+    mediaUrl,
+    mediaPath: mediaUrl,
     thumbnailKey: post.thumbnailKey,
     thumbnailUrl,
     thumbnailPath: thumbnailUrl,
@@ -52,13 +71,42 @@ function serializePost(post: RegionPost & { author: { fullName: string; mobileE1
     assemblyId: post.assemblyId,
     boothId: post.boothId,
     regionLabel: post.regionLabel,
+    issueId: issue.id,
+    issueCode: issue.code,
+    issueName: issue.name,
+    issueNameHi: issue.nameHi,
+    issueNameBho: issue.nameBho,
+    issuePriority: issue.priority,
+    issueBand: issue.band,
+    issue,
   };
 }
 
 const authorSelect = { fullName: true, mobileE164: true } as const;
+const postInclude = { author: { select: authorSelect }, issue: true } as const;
+
+async function resolveIssue(issueId?: string, issueCode?: string) {
+  if (issueId) {
+    const issue = await prisma.postIssue.findUnique({ where: { id: issueId } });
+    if (issue) return issue;
+  }
+  if (issueCode) {
+    const issue = await prisma.postIssue.findUnique({ where: { code: issueCode.toUpperCase() } });
+    if (issue) return issue;
+  }
+  return null;
+}
 
 export const postsRouter = Router();
 postsRouter.use(requireAuth);
+
+postsRouter.get('/issues', async (_req, res) => {
+  const [items, timestamp] = await Promise.all([
+    prisma.postIssue.findMany({ orderBy: { priority: 'asc' } }),
+    issueSyncTimestamp(),
+  ]);
+  return ok(res, { issues: items.map(serializeIssue), timestamp });
+});
 
 postsRouter.get('/', async (req, res) => {
   const auth = req as AuthedRequest;
@@ -68,8 +116,8 @@ postsRouter.get('/', async (req, res) => {
   if (member.assemblyId) filters.push({ assemblyId: member.assemblyId });
   const items = await prisma.regionPost.findMany({
     where: member.isSuperAdmin ? { deletedAt: null } : { deletedAt: null, OR: filters },
-    include: { author: { select: authorSelect } },
-    orderBy: { createdAt: 'desc' },
+    include: postInclude,
+    orderBy: [{ issue: { priority: 'asc' } }, { createdAt: 'desc' }],
     take: 80,
   });
   return ok(res, { posts: items.map(serializePost) });
@@ -80,13 +128,14 @@ postsRouter.post('/', postMediaFields, async (req, res) => {
   const files = req.files as Record<string, Express.Multer.File[]> | undefined;
   const file = files?.file?.[0];
   const thumbnail = files?.thumbnail?.[0];
-  if (!file) throw badRequest('Add a photo, audio or video');
   const optionalUuid = z.preprocess((value) => (value === '' || value == null ? undefined : value), uuid.optional());
   const parsed = z
     .object({
       clientUuid: uuid,
       description: z.string().trim().max(2000).optional(),
       mediaType: z.enum(['IMAGE', 'AUDIO', 'VIDEO', 'image', 'audio', 'video']).optional(),
+      issueId: optionalUuid,
+      issueCode: z.string().trim().max(40).optional(),
       latitude: z.coerce.number().min(-90).max(90).optional(),
       longitude: z.coerce.number().min(-180).max(180).optional(),
       districtId: optionalUuid,
@@ -97,29 +146,37 @@ postsRouter.post('/', postMediaFields, async (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) throw badRequest(parsed.error.issues[0]?.message ?? 'Invalid post');
   const body = parsed.data;
+  const issue = await resolveIssue(body.issueId, body.issueCode);
+  if (!issue) throw badRequest('Select an issue');
+  const description = body.description ?? '';
+  if (!file && !description) throw badRequest('Add a photo, audio or video, or write a description');
   const existing = await prisma.regionPost.findUnique({
     where: { clientUuid: body.clientUuid },
-    include: { author: { select: authorSelect } },
+    include: postInclude,
   });
   if (existing) return created(res, { post: serializePost(existing) });
 
-  const type = mediaKind(file.mimetype, body.mediaType?.toUpperCase());
-  if (type === 'IMAGE' && !file.mimetype.startsWith('image/')) throw badRequest('Use a photo file');
-  if (type === 'AUDIO' && !file.mimetype.startsWith('audio/')) throw badRequest('Use an audio file');
-  if (type === 'VIDEO' && !file.mimetype.startsWith('video/')) throw badRequest('Use a video file');
-
-  const key = `posts/${auth.member.id}/${randomUUID()}.${extFor(file.mimetype, file.originalname)}`;
-  await putMemberPhoto(key, file.buffer, file.mimetype || 'application/octet-stream');
+  let type: RegionPostMedia = 'IMAGE';
+  let key = '';
   let thumbnailKey: string | undefined;
-  if (thumbnail && (type === 'VIDEO' || thumbnail.mimetype.startsWith('image/'))) {
-    thumbnailKey = `posts/${auth.member.id}/${randomUUID()}.${extFor(thumbnail.mimetype || 'image/jpeg', thumbnail.originalname || 'thumb.jpg')}`;
-    await putMemberPhoto(thumbnailKey, thumbnail.buffer, thumbnail.mimetype || 'image/jpeg');
+  if (file) {
+    type = mediaKind(file.mimetype, body.mediaType?.toUpperCase());
+    if (type === 'IMAGE' && !file.mimetype.startsWith('image/')) throw badRequest('Use a photo file');
+    if (type === 'AUDIO' && !file.mimetype.startsWith('audio/')) throw badRequest('Use an audio file');
+    if (type === 'VIDEO' && !file.mimetype.startsWith('video/')) throw badRequest('Use a video file');
+    key = `posts/${auth.member.id}/${randomUUID()}.${extFor(file.mimetype, file.originalname)}`;
+    await putMemberPhoto(key, file.buffer, file.mimetype || 'application/octet-stream');
+    if (thumbnail && (type === 'VIDEO' || thumbnail.mimetype.startsWith('image/'))) {
+      thumbnailKey = `posts/${auth.member.id}/${randomUUID()}.${extFor(thumbnail.mimetype || 'image/jpeg', thumbnail.originalname || 'thumb.jpg')}`;
+      await putMemberPhoto(thumbnailKey, thumbnail.buffer, thumbnail.mimetype || 'image/jpeg');
+    }
   }
   const post = await prisma.regionPost.create({
     data: {
       clientUuid: body.clientUuid,
       authorId: auth.member.id,
-      description: body.description ?? '',
+      issueId: issue.id,
+      description,
       mediaType: type,
       mediaKey: key,
       thumbnailKey,
@@ -130,7 +187,7 @@ postsRouter.post('/', postMediaFields, async (req, res) => {
       boothId: body.boothId ?? auth.member.boothId,
       regionLabel: body.regionLabel,
     },
-    include: { author: { select: authorSelect } },
+    include: postInclude,
   });
   return created(res, { post: serializePost(post) });
 });

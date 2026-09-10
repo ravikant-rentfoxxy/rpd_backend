@@ -91,6 +91,11 @@ enum MeetingStatus {
   CLOSED
 }
 
+enum EngagementType {
+  POLL
+  QUIZ
+}
+
 enum ConsentKind {
   MEMBERSHIP_REQUIRED
   WHATSAPP_UPDATES
@@ -411,6 +416,11 @@ model Member {
   attendees   ActivityAttendee[]
   auditLogs   AuditLog[]
   regionPosts RegionPost[]
+  orgEventsHosted OrgEvent[]     @relation("OrgEventHost")
+  orgEventJoins   OrgEventJoin[]
+  orgTasksHosted  OrgTask[]      @relation("OrgTaskHost")
+  engagementEventsCreated EngagementEvent[] @relation("EngagementEventCreator")
+  engagementEntries       EngagementEntry[]
 
   @@index([boothId])
   @@index([mandalId])
@@ -457,10 +467,35 @@ model MemberPost {
   @@map("member_posts")
 }
 
+model PostIssue {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(40)
+  name      String   @db.VarChar(80)
+  nameHi    String   @map("name_hi") @db.VarChar(80)
+  nameBho   String   @map("name_bho") @db.VarChar(80)
+  priority  Int      @unique
+  band      String   @db.VarChar(24)
+  reason    String   @db.VarChar(240)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  posts RegionPost[]
+
+  @@index([priority])
+  @@map("post_issues")
+}
+
+model PostIssueSync {
+  id        Int      @id
+  updatedAt DateTime @map("updated_at") @db.Timestamptz(6)
+
+  @@map("post_issue_sync")
+}
+
 model RegionPost {
   id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientUuid  String          @unique @map("client_uuid") @db.Uuid
   authorId    String          @map("author_id") @db.Uuid
+  issueId     String          @map("issue_id") @db.Uuid
   description String          @default("") @db.VarChar(2000)
   mediaType     RegionPostMedia @map("media_type")
   mediaKey      String          @map("media_key") @db.VarChar(512)
@@ -474,11 +509,13 @@ model RegionPost {
   createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   deletedAt   DateTime?       @map("deleted_at") @db.Timestamptz(6)
 
-  author Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  author Member    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  issue  PostIssue @relation(fields: [issueId], references: [id])
 
   @@index([authorId, createdAt])
   @@index([districtId, createdAt])
   @@index([assemblyId, createdAt])
+  @@index([issueId, createdAt])
   @@map("region_posts")
 }
 
@@ -811,4 +848,155 @@ model NearbyActivityCard {
 
   @@index([sortOrder])
   @@map("nearby_activity_cards")
+}
+
+model OrgTask {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hostId      String    @map("host_id") @db.Uuid
+  hostPost    String    @map("host_post") @db.VarChar(40)
+  hostRank    Int       @map("host_rank")
+  title       String    @db.VarChar(200)
+  description String?   @db.Text
+  stateId     String?   @map("state_id") @db.Uuid
+  districtId  String?   @map("district_id") @db.Uuid
+  assemblyId  String?   @map("assembly_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  host Member @relation("OrgTaskHost", fields: [hostId], references: [id], onDelete: Restrict)
+
+  @@index([hostId])
+  @@index([createdAt])
+  @@index([stateId, districtId, assemblyId])
+  @@map("org_tasks")
+}
+
+model OrgEvent {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hostId      String       @map("host_id") @db.Uuid
+  hostPost    String       @map("host_post") @db.VarChar(40)
+  hostRank    Int          @map("host_rank")
+  type        ActivityType
+  title       String       @db.VarChar(200)
+  description String?      @db.Text
+  startsAt    DateTime     @map("starts_at") @db.Timestamptz(6)
+  venue       String       @db.VarChar(200)
+  imageUrl    String?      @map("image_url") @db.VarChar(512)
+  stateId     String?      @map("state_id") @db.Uuid
+  districtId  String?      @map("district_id") @db.Uuid
+  assemblyId  String?      @map("assembly_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  host  Member         @relation("OrgEventHost", fields: [hostId], references: [id], onDelete: Restrict)
+  joins OrgEventJoin[]
+
+  @@index([startsAt])
+  @@index([hostId])
+  @@index([hostRank])
+  @@index([stateId, districtId, assemblyId])
+  @@index([type])
+  @@map("org_events")
+}
+
+model OrgEventJoin {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId   String   @map("event_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event  OrgEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, memberId])
+  @@index([memberId])
+  @@map("org_event_joins")
+}
+
+model EngagementEvent {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        EngagementType
+  title       String          @db.VarChar(200)
+  description String          @db.Text
+  startsAt    DateTime        @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime        @map("ends_at") @db.Timestamptz(6)
+  published   Boolean         @default(true)
+  createdById String          @map("created_by_id") @db.Uuid
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  createdBy Member                 @relation("EngagementEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  questions EngagementQuestion[]
+  entries   EngagementEntry[]
+
+  @@index([startsAt, endsAt])
+  @@index([published, deletedAt])
+  @@map("engagement_events")
+}
+
+model EngagementQuestion {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId   String   @map("event_id") @db.Uuid
+  prompt    String   @db.VarChar(400)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event   EngagementEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  options EngagementOption[]
+  answers EngagementAnswer[]
+
+  @@index([eventId, sortOrder])
+  @@map("engagement_questions")
+}
+
+model EngagementOption {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label     String   @db.VarChar(200)
+  isCorrect Boolean  @default(false) @map("is_correct")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  question EngagementQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answers  EngagementAnswer[]
+
+  @@index([questionId, sortOrder])
+  @@map("engagement_options")
+}
+
+model EngagementEntry {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId     String    @map("event_id") @db.Uuid
+  memberId    String    @map("member_id") @db.Uuid
+  dismissedAt DateTime? @map("dismissed_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  event   EngagementEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member  Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  answers EngagementAnswer[]
+
+  @@unique([eventId, memberId])
+  @@index([memberId])
+  @@map("engagement_entries")
+}
+
+model EngagementAnswer {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entryId    String   @map("entry_id") @db.Uuid
+  questionId String   @map("question_id") @db.Uuid
+  optionId   String   @map("option_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entry    EngagementEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  question EngagementQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  option   EngagementOption   @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@unique([entryId, questionId])
+  @@index([questionId])
+  @@map("engagement_answers")
 }

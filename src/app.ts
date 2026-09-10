@@ -17,6 +17,9 @@ import { verificationRouter } from './modules/verification/verification.routes.j
 import { consentsRouter } from './modules/consents/consents.routes.js';
 import { geoRouter } from './modules/geo/geo.routes.js';
 import { postsRouter } from './modules/posts/posts.routes.js';
+import { eventsRouter } from './modules/events/events.routes.js';
+import { engagementRouter } from './modules/engagement/engagement.routes.js';
+import { adminRouter } from './modules/admin/admin.routes.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { getObjectStream } from './lib/storage.js';
 import { Readable } from 'node:stream';
@@ -71,6 +74,9 @@ export function createApp() {
   api.use('/consents', consentsRouter);
   api.use('/geo', geoRouter);
   api.use('/posts', postsRouter);
+  api.use('/events', eventsRouter);
+  api.use('/engagement', engagementRouter);
+  api.use('/admin', adminRouter);
   api.get('/media/:kind/:id/:file', async (req, res, next) => {
     try {
       const key = `${req.params.kind}/${req.params.id}/${req.params.file}`;

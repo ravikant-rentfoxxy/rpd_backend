@@ -18,7 +18,7 @@ type MemberWithGraph = Member & {
         district?: (District & { state?: { name: string } | null }) | null;
       })
     | null;
-  state?: { name: string } | null;
+  state?: { name: string; code?: string } | null;
   district?: { name: string } | null;
   assembly?: { code: string; name: string } | null;
   posts?: MemberPost[];
@@ -65,7 +65,8 @@ export function serializeMember(member: MemberWithGraph) {
   return {
     id: member.id,
     rowId: member.rowId,
-    membershipNumber: member.membershipNumber ?? membershipNumberFromRowId(member.rowId),
+    membershipNumber: member.membershipNumber ?? membershipNumberFromRowId(member.rowId, member.state?.code),
+    stateCode: member.state?.code ?? null,
     mobile: member.mobileE164,
     fullName: member.fullName,
     dateOfBirth: member.dateOfBirth,

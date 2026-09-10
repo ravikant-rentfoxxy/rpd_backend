@@ -36,10 +36,6 @@ export function luhnCheckDigit(digits: string): string {
   return String((10 - (sum % 10)) % 10);
 }
 
-export function nextMembershipNumber(seq: number): string {
-  return `RPD-${seq}`;
-}
-
 export function signCardPayload(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('base64url');
 }

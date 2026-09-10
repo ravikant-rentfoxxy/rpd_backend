@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { seedOrgHierarchy } from './seed-org-hierarchy.js';
+import { seedPostIssues } from './seed-post-issues.js';
 import { upsertIndiaGeo } from './upsert-india-geo.js';
 
 const prisma = new PrismaClient();
@@ -17,8 +18,8 @@ function hashMobile(mobileE164: string) {
   return createHash('sha256').update(mobileE164).digest('hex');
 }
 
-function membershipNumberFromRowId(rowId: number) {
-  return `RPD-${rowId}`;
+function membershipNumberFromRowId(rowId: number, stateCode?: string) {
+  return stateCode ? `RPD-${stateCode}-${rowId}` : `RPD-${rowId}`;
 }
 
 async function main() {
@@ -52,6 +53,7 @@ async function main() {
   await prisma.pointRule.deleteMany();
 
   await seedOrgHierarchy(prisma);
+  await seedPostIssues(prisma);
   await upsertIndiaGeo(prisma);
   const up = await prisma.state.findUniqueOrThrow({ where: { code: 'UP' } });
   const west = await prisma.region.upsert({
@@ -181,7 +183,7 @@ async function main() {
   });
   await prisma.member.update({
     where: { id: suresh.id },
-    data: { membershipNumber: membershipNumberFromRowId(suresh.rowId) },
+    data: { membershipNumber: membershipNumberFromRowId(suresh.rowId, 'UP') },
   });
 
   const rajesh = await prisma.member.create({
@@ -201,7 +203,7 @@ async function main() {
   });
   await prisma.member.update({
     where: { id: rajesh.id },
-    data: { membershipNumber: membershipNumberFromRowId(rajesh.rowId) },
+    data: { membershipNumber: membershipNumberFromRowId(rajesh.rowId, 'UP') },
   });
 
   await prisma.memberPost.createMany({
@@ -214,7 +216,7 @@ async function main() {
   await prisma.membershipCard.create({
     data: {
       memberId: suresh.id,
-      publicCode: membershipNumberFromRowId(suresh.rowId),
+      publicCode: membershipNumberFromRowId(suresh.rowId, 'UP'),
       validTo: new Date('2028-03-31'),
     },
   });
@@ -247,7 +249,7 @@ async function main() {
     });
     await prisma.member.update({
       where: { id: recruit.id },
-      data: { membershipNumber: membershipNumberFromRowId(recruit.rowId) },
+      data: { membershipNumber: membershipNumberFromRowId(recruit.rowId, 'UP') },
     });
     createdRecruits.push(recruit);
   }
