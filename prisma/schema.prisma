@@ -1,0 +1,814 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNDISCLOSED
+}
+
+enum MemberStatus {
+  DRAFT
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum OrgLevelCode {
+  NATIONAL
+  STATE
+  REGION
+  DISTRICT
+  ASSEMBLY
+  MANDAL
+}
+
+enum PostType {
+  MEMBER
+  PANNA_PRAMUKH
+  BOOTH_ADHYAKSH
+  NATIONAL_PRESIDENT
+  NATIONAL_GENERAL_SECRETARY
+  STATE_PRESIDENT
+  STATE_GENERAL_SECRETARY
+  REGIONAL_PRESIDENT
+  DISTRICT_PRESIDENT
+  DISTRICT_GENERAL_SECRETARY
+  DISTRICT_SECRETARY
+  ASSEMBLY_IN_CHARGE
+  MANDAL_PRESIDENT
+}
+
+enum ActivityType {
+  MEETING
+  ADD_MEMBER
+  GRIHA_SAMPARK
+  PUBLIC_PROGRAMME
+  TRAINING
+  OTHER
+}
+
+enum ActivityStatus {
+  QUEUED
+  UPLOADED
+  PENDING_VERIFICATION
+  VERIFIED
+  NOT_VERIFIED
+  APPEALED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  OVERDUE
+  CANCELLED
+}
+
+enum TaskPriority {
+  OVERDUE
+  TODAY
+  THIS_WEEK
+  LATER
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  CLOSED
+}
+
+enum ConsentKind {
+  MEMBERSHIP_REQUIRED
+  WHATSAPP_UPDATES
+}
+
+enum RegionPostMedia {
+  IMAGE
+  AUDIO
+  VIDEO
+}
+
+enum OtpChannel {
+  WHATSAPP
+  SMS
+}
+
+enum OtpPurpose {
+  SIGN_IN
+  RECRUIT_CONSENT
+}
+
+enum PointSource {
+  MEMBER_VERIFIED
+  MEETING_HELD
+  GRIHA_SAMPARK
+  PUBLIC_PROGRAMME
+  TRAINING
+  PENALTY
+  ADJUSTMENT
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum LocaleCode {
+  HI
+  EN
+  BHO
+}
+
+enum HealthBand {
+  STRONG
+  ATTENTION
+  WEAK
+}
+
+enum ContributionType {
+  PRIMARY_MEMBER
+  VOLUNTEER
+  DONATION
+}
+
+enum VolunteerMode {
+  ONLINE
+  OFFLINE
+}
+
+// ---------------------------------------------------------------------------
+// Geography — India electoral hierarchy
+// ---------------------------------------------------------------------------
+
+model OrgLevel {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      OrgLevelCode @unique
+  name      String       @db.VarChar(80)
+  nameHi    String?      @map("name_hi") @db.VarChar(80)
+  sortOrder Int          @map("sort_order")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  posts OrgPost[]
+
+  @@map("org_levels")
+}
+
+model OrgPost {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  levelId   String   @map("level_id") @db.Uuid
+  post      PostType @unique
+  title     String   @db.VarChar(80)
+  titleHi   String?  @map("title_hi") @db.VarChar(80)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  level OrgLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+
+  @@index([levelId])
+  @@map("org_posts")
+}
+
+model State {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique @db.VarChar(8)
+  name      String   @db.VarChar(120)
+  nameHi    String?  @map("name_hi") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  regions        Region[]
+  districts      District[]
+  constituencies AssemblyConstituency[]
+  members        Member[]
+  posts          MemberPost[]
+
+  @@map("states")
+}
+
+model Region {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stateId   String   @map("state_id") @db.Uuid
+  code      String   @db.VarChar(16)
+  name      String   @db.VarChar(120)
+  nameHi    String?  @map("name_hi") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  state     State        @relation(fields: [stateId], references: [id], onDelete: Restrict)
+  districts District[]
+  members   Member[]
+  posts     MemberPost[]
+
+  @@unique([stateId, code])
+  @@index([stateId])
+  @@map("regions")
+}
+
+model District {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stateId   String   @map("state_id") @db.Uuid
+  regionId  String?  @map("region_id") @db.Uuid
+  code      String   @db.VarChar(16)
+  name      String   @db.VarChar(120)
+  nameHi    String?  @map("name_hi") @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  state                   State                   @relation(fields: [stateId], references: [id], onDelete: Restrict)
+  region                  Region?                 @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  assemblies              AssemblyConstituency[]
+  mandals                 Mandal[]
+  booths                  Booth[]
+  members                 Member[]
+  districtOfficeBearers   MemberPost[]
+
+  @@unique([stateId, code])
+  @@index([stateId])
+  @@index([regionId])
+  @@map("districts")
+}
+
+model AssemblyConstituency {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stateId    String   @map("state_id") @db.Uuid
+  districtId String   @map("district_id") @db.Uuid
+  code       String   @db.VarChar(16)
+  number     Int
+  name       String   @db.VarChar(160)
+  nameHi     String?  @map("name_hi") @db.VarChar(160)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  state    State     @relation(fields: [stateId], references: [id], onDelete: Restrict)
+  district District  @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  mandals  Mandal[]
+  booths   Booth[]
+  members  Member[]
+  posts    MemberPost[]
+
+  @@unique([districtId, code])
+  @@index([stateId])
+  @@index([districtId])
+  @@map("assembly_constituencies")
+}
+
+model Mandal {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  districtId  String   @map("district_id") @db.Uuid
+  assemblyId  String   @map("assembly_id") @db.Uuid
+  code        String   @db.VarChar(16)
+  name        String   @db.VarChar(160)
+  nameHi      String?  @map("name_hi") @db.VarChar(160)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  district  District              @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  assembly  AssemblyConstituency  @relation(fields: [assemblyId], references: [id], onDelete: Restrict)
+  booths    Booth[]
+  members   Member[]
+  posts     MemberPost[]
+  tasks     Task[]
+
+  @@unique([districtId, code])
+  @@index([districtId])
+  @@index([assemblyId])
+  @@map("mandals")
+}
+
+model Booth {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  districtId   String     @map("district_id") @db.Uuid
+  assemblyId   String     @map("assembly_id") @db.Uuid
+  mandalId     String     @map("mandal_id") @db.Uuid
+  code         String     @db.VarChar(16)
+  boothNumber  String     @map("booth_number") @db.VarChar(8)
+  partNumber   String     @map("part_number") @db.VarChar(16)
+  name         String     @db.VarChar(200)
+  landmark     String     @db.VarChar(200)
+  village      String     @db.VarChar(160)
+  pincode      String     @db.VarChar(6)
+  voterCount   Int        @default(0) @map("voter_count")
+  memberCount  Int        @default(0) @map("member_count")
+  latitude     Decimal    @db.Decimal(10, 7)
+  longitude    Decimal    @db.Decimal(10, 7)
+  healthScore  Int        @default(0) @map("health_score")
+  healthBand   HealthBand @default(ATTENTION) @map("health_band")
+  lastActivityAt DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  district   District             @relation(fields: [districtId], references: [id], onDelete: Restrict)
+  assembly   AssemblyConstituency @relation(fields: [assemblyId], references: [id], onDelete: Restrict)
+  mandal     Mandal               @relation(fields: [mandalId], references: [id], onDelete: Restrict)
+  members    Member[]
+  activities Activity[]
+  meetings   Meeting[]
+  tasks      Task[]
+  posts      MemberPost[]
+  healthComponents BoothHealthComponent[]
+
+  @@unique([districtId, code])
+  @@index([mandalId])
+  @@index([assemblyId])
+  @@index([village])
+  @@index([partNumber])
+  @@index([pincode])
+  @@index([latitude, longitude])
+  @@index([deletedAt])
+  @@map("booths")
+}
+
+model BoothHealthComponent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  boothId   String   @map("booth_id") @db.Uuid
+  key       String   @db.VarChar(64)
+  label     String   @db.VarChar(160)
+  score     Int
+  maxScore  Int      @map("max_score")
+  detail    String   @db.VarChar(240)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  booth Booth @relation(fields: [boothId], references: [id], onDelete: Cascade)
+
+  @@unique([boothId, key])
+  @@map("booth_health_components")
+}
+
+// ---------------------------------------------------------------------------
+// Members, posts, cards
+// ---------------------------------------------------------------------------
+
+model Member {
+  id                 String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rowId              Int          @unique @default(autoincrement()) @map("row_id")
+  membershipNumber   String?      @unique @map("membership_number") @db.VarChar(32)
+  mobileE164         String       @unique @map("mobile_e164") @db.VarChar(16)
+  mobileHash         String       @unique @map("mobile_hash") @db.VarChar(64)
+  fullName           String       @map("full_name") @db.VarChar(160)
+  dateOfBirth        DateTime?    @map("date_of_birth") @db.Date
+  gender             Gender       @default(UNDISCLOSED)
+  locale             LocaleCode   @default(HI)
+  status             MemberStatus @default(DRAFT)
+  isSuperAdmin       Boolean      @default(false) @map("is_super_admin")
+  photoUrl           String?      @map("photo_url") @db.VarChar(512)
+  address            String?      @db.VarChar(400)
+  pincode            String?      @db.VarChar(6)
+  whatsappOptIn      Boolean      @default(false) @map("whatsapp_opt_in")
+  contributionType   ContributionType? @map("contribution_type")
+  referralCode       String?      @map("referral_code") @db.VarChar(32)
+  volunteerMode      VolunteerMode? @map("volunteer_mode")
+  weeklyHours        Int?         @map("weekly_hours")
+  validTo            DateTime?    @map("valid_to") @db.Date
+  stateId            String?      @map("state_id") @db.Uuid
+  regionId           String?      @map("region_id") @db.Uuid
+  districtId         String?      @map("district_id") @db.Uuid
+  assemblyId         String?      @map("assembly_id") @db.Uuid
+  mandalId           String?      @map("mandal_id") @db.Uuid
+  boothId            String?      @map("booth_id") @db.Uuid
+  recruitedById      String?      @map("recruited_by_id") @db.Uuid
+  lastActiveAt       DateTime?    @map("last_active_at") @db.Timestamptz(6)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  state       State?                 @relation(fields: [stateId], references: [id], onDelete: SetNull)
+  region      Region?                @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  district    District?              @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  assembly    AssemblyConstituency?  @relation(fields: [assemblyId], references: [id], onDelete: SetNull)
+  mandal      Mandal?                @relation(fields: [mandalId], references: [id], onDelete: SetNull)
+  booth       Booth?                 @relation(fields: [boothId], references: [id], onDelete: SetNull)
+  recruitedBy Member?                @relation("Recruits", fields: [recruitedById], references: [id], onDelete: SetNull)
+  recruits    Member[]               @relation("Recruits")
+  posts       MemberPost[]
+  card        MembershipCard?
+  consents    MemberConsent[]
+  refreshTokens RefreshToken[]
+  otpChallenges OtpChallenge[]
+  activities  Activity[]             @relation("ActivityActor")
+  reviews     ActivityReview[]
+  assignedTasks Task[]               @relation("TaskAssignee")
+  createdTasks  Task[]               @relation("TaskAssigner")
+  meetingsHosted Meeting[]
+  checkIns    MeetingCheckIn[]
+  ledger      PointLedgerEntry[]
+  attendees   ActivityAttendee[]
+  auditLogs   AuditLog[]
+  regionPosts RegionPost[]
+
+  @@index([boothId])
+  @@index([mandalId])
+  @@index([assemblyId])
+  @@index([districtId])
+  @@index([regionId])
+  @@index([stateId])
+  @@index([status])
+  @@index([recruitedById])
+  @@index([lastActiveAt])
+  @@index([deletedAt])
+  @@map("members")
+}
+
+model MemberPost {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId    String    @map("member_id") @db.Uuid
+  post        PostType
+  boothId     String?   @map("booth_id") @db.Uuid
+  mandalId    String?   @map("mandal_id") @db.Uuid
+  assemblyId  String?   @map("assembly_id") @db.Uuid
+  districtId  String?   @map("district_id") @db.Uuid
+  regionId    String?   @map("region_id") @db.Uuid
+  stateId     String?   @map("state_id") @db.Uuid
+  pageNumber  Int?      @map("page_number")
+  isPrimary   Boolean   @default(true) @map("is_primary")
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt     DateTime? @map("ended_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member     Member                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  booth      Booth?                 @relation(fields: [boothId], references: [id], onDelete: SetNull)
+  mandal     Mandal?                @relation(fields: [mandalId], references: [id], onDelete: SetNull)
+  assembly   AssemblyConstituency?  @relation(fields: [assemblyId], references: [id], onDelete: SetNull)
+  district   District?              @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  region     Region?                @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  state      State?                 @relation(fields: [stateId], references: [id], onDelete: SetNull)
+
+  @@index([memberId, isPrimary])
+  @@index([post])
+  @@index([assemblyId])
+  @@index([stateId])
+  @@index([regionId])
+  @@map("member_posts")
+}
+
+model RegionPost {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientUuid  String          @unique @map("client_uuid") @db.Uuid
+  authorId    String          @map("author_id") @db.Uuid
+  description String          @default("") @db.VarChar(2000)
+  mediaType     RegionPostMedia @map("media_type")
+  mediaKey      String          @map("media_key") @db.VarChar(512)
+  thumbnailKey  String?         @map("thumbnail_key") @db.VarChar(512)
+  latitude      Decimal?        @db.Decimal(9, 6)
+  longitude   Decimal?        @db.Decimal(9, 6)
+  districtId  String?         @map("district_id") @db.Uuid
+  assemblyId  String?         @map("assembly_id") @db.Uuid
+  boothId     String?         @map("booth_id") @db.Uuid
+  regionLabel String?         @map("region_label") @db.VarChar(200)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt   DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  author Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId, createdAt])
+  @@index([districtId, createdAt])
+  @@index([assemblyId, createdAt])
+  @@map("region_posts")
+}
+
+model MembershipCard {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId   String   @unique @map("member_id") @db.Uuid
+  publicCode String   @unique @map("public_code") @db.VarChar(48)
+  issuedAt   DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+  validTo    DateTime @map("valid_to") @db.Date
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("membership_cards")
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+model OtpChallenge {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId    String?    @map("member_id") @db.Uuid
+  mobileE164  String     @map("mobile_e164") @db.VarChar(16)
+  codeHash    String     @map("code_hash") @db.VarChar(80)
+  channel     OtpChannel @default(WHATSAPP)
+  purpose     OtpPurpose @default(SIGN_IN)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5) @map("max_attempts")
+  resendCount Int        @default(0) @map("resend_count")
+  expiresAt   DateTime   @map("expires_at") @db.Timestamptz(6)
+  consumedAt  DateTime?  @map("consumed_at") @db.Timestamptz(6)
+  lockedUntil DateTime?  @map("locked_until") @db.Timestamptz(6)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member Member? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([mobileE164, purpose, createdAt])
+  @@map("otp_challenges")
+}
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId   String    @map("member_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(80)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  userAgent  String?   @map("user_agent") @db.VarChar(240)
+  ipAddress  String?   @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Consent (DPDP-ready)
+// ---------------------------------------------------------------------------
+
+model ConsentDocument {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version     String      @db.VarChar(16)
+  kind        ConsentKind
+  locale      LocaleCode
+  title       String      @db.VarChar(200)
+  body        String      @db.Text
+  isCurrent   Boolean     @default(false) @map("is_current")
+  effectiveAt DateTime    @default(now()) @map("effective_at") @db.Timestamptz(6)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  acceptances MemberConsent[]
+
+  @@unique([version, kind, locale])
+  @@index([kind, locale, isCurrent])
+  @@map("consent_documents")
+}
+
+model MemberConsent {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId    String   @map("member_id") @db.Uuid
+  documentId  String   @map("document_id") @db.Uuid
+  kind        ConsentKind
+  locale      LocaleCode
+  accepted    Boolean
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  userAgent   String?  @map("user_agent") @db.VarChar(240)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member   Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  document ConsentDocument  @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@index([memberId, kind])
+  @@map("member_consents")
+}
+
+// ---------------------------------------------------------------------------
+// Work: activities, meetings, tasks, points
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientUuid      String         @unique @map("client_uuid") @db.Uuid
+  actorId         String         @map("actor_id") @db.Uuid
+  boothId         String         @map("booth_id") @db.Uuid
+  type            ActivityType
+  status          ActivityStatus @default(QUEUED)
+  occurredAt      DateTime       @map("occurred_at") @db.Timestamptz(6)
+  backdateReason  String?        @map("backdate_reason") @db.VarChar(400)
+  notes           String?        @db.Text
+  latitude        Decimal?       @db.Decimal(10, 7)
+  longitude       Decimal?       @db.Decimal(10, 7)
+  distanceMetres  Int?           @map("distance_metres")
+  farAwayReason   String?        @map("far_away_reason") @db.VarChar(400)
+  reviewFlag      Boolean        @default(false) @map("review_flag")
+  homesCovered    Int?           @map("homes_covered")
+  attendeeCount   Int            @default(0) @map("attendee_count")
+  photoCount      Int            @default(0) @map("photo_count")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?      @map("deleted_at") @db.Timestamptz(6)
+
+  actor     Member             @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Restrict)
+  booth     Booth              @relation(fields: [boothId], references: [id], onDelete: Restrict)
+  photos    ActivityPhoto[]
+  attendees ActivityAttendee[]
+  reviews   ActivityReview[]
+  ledger    PointLedgerEntry[]
+  meeting   Meeting?
+
+  @@index([actorId, occurredAt])
+  @@index([boothId, occurredAt])
+  @@index([status])
+  @@index([type])
+  @@map("activities")
+}
+
+model ActivityPhoto {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  activityId String   @map("activity_id") @db.Uuid
+  kind       String   @db.VarChar(32)
+  storageKey String   @map("storage_key") @db.VarChar(512)
+  bytes      Int
+  capturedAt DateTime @map("captured_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId])
+  @@map("activity_photos")
+}
+
+model ActivityAttendee {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  activityId String   @map("activity_id") @db.Uuid
+  memberId   String?  @map("member_id") @db.Uuid
+  freeName   String?  @map("free_name") @db.VarChar(160)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  member   Member?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([activityId])
+  @@map("activity_attendees")
+}
+
+model ActivityReview {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  activityId String         @map("activity_id") @db.Uuid
+  reviewerId String         @map("reviewer_id") @db.Uuid
+  decision   ActivityStatus
+  reason     String?        @db.VarChar(600)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  reviewer Member   @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([activityId])
+  @@index([reviewerId])
+  @@map("activity_reviews")
+}
+
+model Meeting {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  boothId    String        @map("booth_id") @db.Uuid
+  hostId     String        @map("host_id") @db.Uuid
+  activityId String?       @unique @map("activity_id") @db.Uuid
+  title      String        @db.VarChar(200)
+  agenda     String        @db.Text
+  startsAt   DateTime      @map("starts_at") @db.Timestamptz(6)
+  venue      String        @db.VarChar(200)
+  status     MeetingStatus @default(SCHEDULED)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  booth    Booth             @relation(fields: [boothId], references: [id], onDelete: Restrict)
+  host     Member            @relation(fields: [hostId], references: [id], onDelete: Restrict)
+  activity Activity?         @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  invitees MeetingInvitee[]
+  checkIns MeetingCheckIn[]
+
+  @@index([boothId, startsAt])
+  @@map("meetings")
+}
+
+model MeetingInvitee {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  meetingId String   @map("meeting_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  postLabel String   @map("post_label") @db.VarChar(80)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, memberId])
+  @@map("meeting_invitees")
+}
+
+model MeetingCheckIn {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  meetingId  String   @map("meeting_id") @db.Uuid
+  memberId   String   @map("member_id") @db.Uuid
+  scannedAt  DateTime @default(now()) @map("scanned_at") @db.Timestamptz(6)
+  offline    Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Restrict)
+
+  @@unique([meetingId, memberId])
+  @@map("meeting_check_ins")
+}
+
+model Task {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assigneeId  String       @map("assignee_id") @db.Uuid
+  assignerId  String       @map("assigner_id") @db.Uuid
+  boothId     String?      @map("booth_id") @db.Uuid
+  mandalId    String?      @map("mandal_id") @db.Uuid
+  title       String       @db.VarChar(200)
+  detail      String?      @db.VarChar(400)
+  status      TaskStatus   @default(OPEN)
+  priority    TaskPriority @default(THIS_WEEK)
+  progress    Int          @default(0)
+  target      Int          @default(1)
+  dueAt       DateTime     @map("due_at") @db.Timestamptz(6)
+  completedAt DateTime?    @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignee Member  @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  assigner Member  @relation("TaskAssigner", fields: [assignerId], references: [id], onDelete: Restrict)
+  booth    Booth?  @relation(fields: [boothId], references: [id], onDelete: SetNull)
+  mandal   Mandal? @relation(fields: [mandalId], references: [id], onDelete: SetNull)
+
+  @@index([assigneeId, dueAt])
+  @@index([status])
+  @@map("tasks")
+}
+
+model PointRule {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source    PointSource @unique
+  points    Int
+  unitLabel String      @map("unit_label") @db.VarChar(80)
+  active    Boolean     @default(true)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("point_rules")
+}
+
+model PointLedgerEntry {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId    String          @map("member_id") @db.Uuid
+  activityId  String?         @map("activity_id") @db.Uuid
+  source      PointSource
+  direction   LedgerDirection
+  points      Int
+  pending     Boolean         @default(true)
+  note        String          @db.VarChar(240)
+  periodMonth DateTime        @map("period_month") @db.Date
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member   Member    @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  activity Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+
+  @@index([memberId, periodMonth])
+  @@index([pending])
+  @@map("point_ledger")
+}
+
+model SyncIdempotency {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientUuid String   @unique @map("client_uuid") @db.Uuid
+  route      String   @db.VarChar(80)
+  response   Json
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("sync_idempotency")
+}
+
+model AuditLog {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String   @db.VarChar(80)
+  entity     String   @db.VarChar(64)
+  entityId   String?  @map("entity_id") @db.Uuid
+  metadata   Json?
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor Member? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+model NearbyActivityCard {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title      String   @db.VarChar(200)
+  placeLabel String   @map("place_label") @db.VarChar(160)
+  imageUrl   String   @map("image_url") @db.VarChar(512)
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([sortOrder])
+  @@map("nearby_activity_cards")
+}

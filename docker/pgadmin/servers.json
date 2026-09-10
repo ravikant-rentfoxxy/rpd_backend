@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "RPD Postgres",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "rpd",
+      "Username": "rpd",
+      "SSLMode": "prefer",
+      "PassFile": "/tmp/pgpass"
+    }
+  }
+}
