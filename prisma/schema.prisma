@@ -375,6 +375,7 @@ model Member {
   photoUrl           String?      @map("photo_url") @db.VarChar(512)
   address            String?      @db.VarChar(400)
   pincode            String?      @db.VarChar(6)
+  voterId            String?      @unique @map("voter_id") @db.VarChar(20)
   whatsappOptIn      Boolean      @default(false) @map("whatsapp_opt_in")
   contributionType   ContributionType? @map("contribution_type")
   referralCode       String?      @map("referral_code") @db.VarChar(32)
@@ -421,6 +422,8 @@ model Member {
   orgTasksHosted  OrgTask[]      @relation("OrgTaskHost")
   engagementEventsCreated EngagementEvent[] @relation("EngagementEventCreator")
   engagementEntries       EngagementEntry[]
+  activityEventResponses  ActivityEventResponse[]
+  activityEventsCreated   ActivityEvent[] @relation("ActivityEventCreator")
 
   @@index([boothId])
   @@index([mandalId])
@@ -999,4 +1002,57 @@ model EngagementAnswer {
   @@unique([entryId, questionId])
   @@index([questionId])
   @@map("engagement_answers")
+}
+
+model ActivityEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdById String    @map("created_by_id") @db.Uuid
+  title       String    @db.VarChar(200)
+  description String?   @db.Text
+  published   Boolean   @default(true)
+  startsAt    DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime  @map("ends_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  createdBy Member                 @relation("ActivityEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  options   ActivityEventOption[]
+  responses ActivityEventResponse[]
+
+  @@index([createdById])
+  @@index([published, deletedAt, startsAt, endsAt])
+  @@map("activity_events")
+}
+
+model ActivityEventOption {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId   String   @map("event_id") @db.Uuid
+  label     String   @db.VarChar(80)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event     ActivityEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  responses ActivityEventResponse[]
+
+  @@index([eventId, sortOrder])
+  @@map("activity_event_options")
+}
+
+model ActivityEventResponse {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId   String   @map("event_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  optionId  String   @map("option_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  event  ActivityEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  option ActivityEventOption @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@unique([eventId, memberId])
+  @@index([memberId])
+  @@index([optionId])
+  @@map("activity_event_responses")
 }

@@ -1,11 +1,10 @@
 import type { Member, MemberPost, PostType } from '@prisma/client';
-import { env } from '../../config/env.js';
+import { mediaPublicUrl } from '../../lib/storage.js';
 import { labelOf, primaryPost } from './admin.posts.js';
 
 function mediaUrl(key?: string | null) {
   if (!key) return null;
-  if (key.startsWith('http://') || key.startsWith('https://')) return key;
-  return `${env.APP_URL}/api/v1/media/${key}`;
+  return mediaPublicUrl(key);
 }
 
 type AdminMember = Member & {
@@ -30,6 +29,7 @@ export function serializeAdminMember(member: AdminMember) {
     photoUrl: mediaUrl(member.photoUrl),
     address: member.address,
     pincode: member.pincode,
+    voterId: member.voterId,
     stateId: member.stateId,
     regionId: member.regionId,
     districtId: member.districtId,

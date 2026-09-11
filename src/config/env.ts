@@ -19,11 +19,13 @@ const schema = z.object({
   NEARBY_DEFAULT_RADIUS_KM: z.coerce.number().positive().default(10),
   NEARBY_MAX_RADIUS_KM: z.coerce.number().positive().default(25),
   NEARBY_LIMIT: z.coerce.number().int().positive().default(20),
-  S3_ENDPOINT: z.string().url().default('http://127.0.0.1:9000'),
-  S3_REGION: z.string().default('us-east-1'),
-  S3_ACCESS_KEY: z.string().min(3).default('rpdminio'),
-  S3_SECRET_KEY: z.string().min(8).default('rpd_minio_password'),
-  S3_BUCKET: z.string().min(3).default('rpd-temp'),
+  BUNNY_STORAGE_ZONE: z.string().min(1),
+  BUNNY_STORAGE_API_KEY: z.string().min(1),
+  BUNNY_STORAGE_HOSTNAME: z.string().min(1).default('storage.bunnycdn.com'),
+  BUNNY_STORAGE_CDN_HOSTNAME: z.string().min(1),
+  BUNNY_STREAM_LIBRARY_ID: z.string().min(1),
+  BUNNY_STREAM_API_KEY: z.string().min(1),
+  BUNNY_STREAM_CDN_HOSTNAME: z.string().min(1),
 });
 
 const parsed = schema.safeParse(process.env);

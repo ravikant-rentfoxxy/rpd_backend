@@ -83,6 +83,13 @@ const memberGraph = {
   card: true,
 } as const;
 
+const voterIdNumber = z
+  .string()
+  .trim()
+  .transform((value) => value.replace(/\s+/g, '').toUpperCase())
+  .refine((value) => value.length === 0 || /^[A-Z]{3}[0-9]{7}$/.test(value), 'Enter a valid voter ID card number')
+  .transform((value) => (value.length === 0 ? null : value));
+
 const updateProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(160).optional(),
   dateOfBirth: isoDate.optional(),
@@ -93,6 +100,7 @@ const updateProfileSchema = z.object({
     .trim()
     .refine((value) => value.length === 0 || /^\d{6}$/.test(value), 'Enter a 6-digit pincode')
     .nullish(),
+  voterId: voterIdNumber.nullish(),
   boothId: z.string().uuid().nullish(),
   assemblyId: z.string().uuid().nullish(),
 });
@@ -106,6 +114,7 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
     gender?: 'MALE' | 'FEMALE' | 'OTHER' | 'UNDISCLOSED';
     address?: string | null;
     pincode?: string | null;
+    voterId?: string | null;
     boothId?: string | null;
     mandalId?: string | null;
     assemblyId?: string | null;
@@ -119,6 +128,15 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
   if (body.gender) data.gender = body.gender;
   if (body.address !== undefined) data.address = body.address?.trim() || null;
   if (body.pincode !== undefined) data.pincode = body.pincode?.trim() || null;
+  if (body.voterId !== undefined) data.voterId = body.voterId || null;
+
+  if (data.voterId) {
+    const taken = await prisma.member.findFirst({
+      where: { voterId: data.voterId, deletedAt: null, NOT: { id: auth.member.id } },
+      select: { id: true },
+    });
+    if (taken) throw conflict('This voter ID is already registered');
+  }
 
   if (body.boothId || body.assemblyId) {
     const booth = body.boothId

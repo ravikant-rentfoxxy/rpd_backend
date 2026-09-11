@@ -58,9 +58,7 @@ export function serializeOrgEvent(event: EventRow, viewerId: string) {
 }
 
 export function visibleEventWhere(member: EventViewer, rank: number): Prisma.OrgEventWhereInput {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const base: Prisma.OrgEventWhereInput = { deletedAt: null, startsAt: { gte: start } };
+  const base: Prisma.OrgEventWhereInput = { deletedAt: null, startsAt: { gt: new Date() } };
   if (member.isSuperAdmin) return base;
   const geo: Prisma.OrgEventWhereInput[] = [];
   if (member.stateId) geo.push({ OR: [{ stateId: null }, { stateId: member.stateId }] });

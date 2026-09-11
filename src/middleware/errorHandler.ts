@@ -3,12 +3,17 @@ import { ZodError } from 'zod';
 import multer from 'multer';
 import { AppError } from '../lib/errors.js';
 import { isProd } from '../config/env.js';
+import { logError } from '../lib/logger.js';
 
 export function notFoundHandler(_req: Request, res: Response) {
   res.status(404).json({ ok: false, error: { code: 'not_found', message: 'Route not found' } });
 }
 
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+function requestMeta(req: Request) {
+  return { method: req.method, path: req.originalUrl };
+}
+
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ZodError) {
     res.status(400).json({
       ok: false,
@@ -30,6 +35,9 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   }
 
   if (err instanceof AppError) {
+    if (err.status >= 500) {
+      logError(err.message, { ...requestMeta(req), code: err.code, stack: err.stack });
+    }
     res.status(err.status).json({
       ok: false,
       error: { code: err.code, message: err.message, details: err.details },
@@ -37,7 +45,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  console.error(err);
+  logError(err instanceof Error ? err.message : 'Unknown error', {
+    ...requestMeta(req),
+    stack: err instanceof Error ? err.stack : undefined,
+  });
   res.status(500).json({
     ok: false,
     error: {

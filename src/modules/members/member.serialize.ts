@@ -79,6 +79,7 @@ export function serializeMember(member: MemberWithGraph) {
     photoUrl: member.photoUrl ? mediaPublicUrl(member.photoUrl) : null,
     address: member.address,
     pincode: member.pincode,
+    voterId: member.voterId,
     whatsappOptIn: member.whatsappOptIn,
     contributionType: member.contributionType,
     referralCode: member.referralCode,

@@ -8,6 +8,7 @@ import { touchLastActive } from './last-active.js';
 import { listVisibleEvents } from '../events/events.routes.js';
 import { listVisibleOrgTasks } from '../tasks/tasks.routes.js';
 import { findActiveEngagement, serializeEngagementPrompt } from '../engagement/engagement.shared.js';
+import { findActiveActivityEvent } from '../activity-events/activity-events.routes.js';
 
 export const homeRouter = Router();
 homeRouter.use(requireAuth);
@@ -84,6 +85,7 @@ homeRouter.get('/', async (req, res) => {
   const upcomingEvents = await listVisibleEvents(member, auth.auth.post, 5).catch(() => []);
   const regionTasks = await listVisibleOrgTasks(member, 12).catch(() => []);
   const activeEngagement = await findActiveEngagement(member.id).catch(() => null);
+  const activityEvent = await findActiveActivityEvent(member.id).catch(() => null);
 
   const points = ledger.filter((e) => !e.pending).reduce((s, e) => s + (e.direction === 'CREDIT' ? e.points : -e.points), 0);
   const pendingPoints = ledger.filter((e) => e.pending && e.direction === 'CREDIT').reduce((s, e) => s + e.points, 0);
@@ -166,5 +168,6 @@ homeRouter.get('/', async (req, res) => {
     })),
     upcomingEvents,
     engagement: activeEngagement ? serializeEngagementPrompt(activeEngagement) : null,
+    activityEvent,
   });
 });

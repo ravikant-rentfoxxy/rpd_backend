@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { created, ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
 import { issueSyncTimestamp } from '../../lib/issue-sync.js';
-import { mediaPublicUrl, putMemberPhoto } from '../../lib/storage.js';
+import { mediaPublicUrl, putMemberPhoto, putStreamVideo, streamThumbnailUrl, streamVideoId } from '../../lib/storage.js';
 import { badRequest } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { postMediaFields } from '../../middleware/upload.js';
@@ -46,7 +46,12 @@ function serializePost(
   const type = post.mediaType.toLowerCase();
   const hasMedia = Boolean(post.mediaKey);
   const mediaUrl = hasMedia ? mediaPublicUrl(post.mediaKey) : null;
-  const thumbnailUrl = post.thumbnailKey ? mediaPublicUrl(post.thumbnailKey) : null;
+  const videoId = streamVideoId(post.mediaKey);
+  const thumbnailUrl = post.thumbnailKey
+    ? mediaPublicUrl(post.thumbnailKey)
+    : videoId
+      ? streamThumbnailUrl(videoId)
+      : null;
   const issue = serializeIssue(post.issue);
   return {
     id: post.clientUuid,
@@ -55,6 +60,7 @@ function serializePost(
     description: post.description,
     mediaType: type,
     mediaKey: hasMedia ? post.mediaKey : null,
+    videoId,
     mediaUrl,
     mediaPath: mediaUrl,
     thumbnailKey: post.thumbnailKey,
@@ -164,8 +170,18 @@ postsRouter.post('/', postMediaFields, async (req, res) => {
     if (type === 'IMAGE' && !file.mimetype.startsWith('image/')) throw badRequest('Use a photo file');
     if (type === 'AUDIO' && !file.mimetype.startsWith('audio/')) throw badRequest('Use an audio file');
     if (type === 'VIDEO' && !file.mimetype.startsWith('video/')) throw badRequest('Use a video file');
-    key = `posts/${auth.member.id}/${randomUUID()}.${extFor(file.mimetype, file.originalname)}`;
-    await putMemberPhoto(key, file.buffer, file.mimetype || 'application/octet-stream');
+    if (type === 'VIDEO') {
+      if (!file.buffer?.byteLength) throw badRequest('Video file is empty');
+      const uploaded = await putStreamVideo(
+        description || `Post ${body.clientUuid}`,
+        file.buffer,
+        file.mimetype || 'video/mp4',
+      );
+      key = uploaded.key;
+    } else {
+      key = `posts/${auth.member.id}/${randomUUID()}.${extFor(file.mimetype, file.originalname)}`;
+      await putMemberPhoto(key, file.buffer, file.mimetype || 'application/octet-stream');
+    }
     if (thumbnail && (type === 'VIDEO' || thumbnail.mimetype.startsWith('image/'))) {
       thumbnailKey = `posts/${auth.member.id}/${randomUUID()}.${extFor(thumbnail.mimetype || 'image/jpeg', thumbnail.originalname || 'thumb.jpg')}`;
       await putMemberPhoto(thumbnailKey, thumbnail.buffer, thumbnail.mimetype || 'image/jpeg');

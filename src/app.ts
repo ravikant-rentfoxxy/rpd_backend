@@ -19,10 +19,10 @@ import { geoRouter } from './modules/geo/geo.routes.js';
 import { postsRouter } from './modules/posts/posts.routes.js';
 import { eventsRouter } from './modules/events/events.routes.js';
 import { engagementRouter } from './modules/engagement/engagement.routes.js';
+import { activityEventsRouter } from './modules/activity-events/activity-events.routes.js';
 import { adminRouter } from './modules/admin/admin.routes.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
-import { getObjectStream } from './lib/storage.js';
-import { Readable } from 'node:stream';
+import { mediaPublicUrl } from './lib/storage.js';
 
 export function createApp() {
   const app = express();
@@ -76,22 +76,13 @@ export function createApp() {
   api.use('/posts', postsRouter);
   api.use('/events', eventsRouter);
   api.use('/engagement', engagementRouter);
+  api.use('/activity-events', activityEventsRouter);
   api.use('/admin', adminRouter);
-  api.get('/media/:kind/:id/:file', async (req, res, next) => {
-    try {
-      const key = `${req.params.kind}/${req.params.id}/${req.params.file}`;
-      const object = await getObjectStream(key);
-      res.setHeader('Content-Type', object.ContentType ?? 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      if (object.Body instanceof Readable) {
-        object.Body.pipe(res);
-        return;
-      }
-      const bytes = await object.Body?.transformToByteArray();
-      res.send(Buffer.from(bytes ?? []));
-    } catch (error) {
-      next(error);
-    }
+  api.get('/media/stream/:id', (req, res) => {
+    res.redirect(302, mediaPublicUrl(`stream/${req.params.id}`));
+  });
+  api.get('/media/:kind/:id/:file', (req, res) => {
+    res.redirect(302, mediaPublicUrl(`${req.params.kind}/${req.params.id}/${req.params.file}`));
   });
 
   app.use('/api/v1', api);
