@@ -9,6 +9,7 @@ import { listVisibleEvents } from '../events/events.routes.js';
 import { listVisibleOrgTasks } from '../tasks/tasks.routes.js';
 import { findActiveEngagement, serializeEngagementPrompt } from '../engagement/engagement.shared.js';
 import { findActiveActivityEvent } from '../activity-events/activity-events.routes.js';
+import { localLeaderboardSnapshot } from '../leaderboard/leaderboard.shared.js';
 
 export const homeRouter = Router();
 homeRouter.use(requireAuth);
@@ -35,9 +36,8 @@ homeRouter.get('/', async (req, res) => {
 
   const lastActiveAt = await touchLastActive(member.id);
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const mandalFilter = member.mandalId ? { mandalId: member.mandalId, deletedAt: null } : { id: member.id };
 
-  const [tasksDue, ledger, mandalMembers, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, meetingsHeld, issuesTimestamp] = await Promise.all([
+  const [tasksDue, ledger, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, meetingsHeld, issuesTimestamp, localBoard] = await Promise.all([
     prisma.task.findMany({
       where: { assigneeId: member.id, status: { in: ['OPEN', 'IN_PROGRESS', 'OVERDUE'] } },
       include: { assigner: true },
@@ -46,10 +46,6 @@ homeRouter.get('/', async (req, res) => {
     }),
     prisma.pointLedgerEntry.findMany({
       where: { memberId: member.id, periodMonth: monthStart },
-    }),
-    prisma.member.findMany({
-      where: mandalFilter,
-      select: { id: true },
     }),
     member.boothId
       ? prisma.boothHealthComponent.findMany({ where: { boothId: member.boothId } })
@@ -81,6 +77,7 @@ homeRouter.get('/', async (req, res) => {
       where: { actorId: member.id, type: 'MEETING', status: { in: ['VERIFIED', 'PENDING_VERIFICATION', 'QUEUED'] } },
     }),
     issueSyncTimestamp(),
+    localLeaderboardSnapshot(member),
   ]);
   const upcomingEvents = await listVisibleEvents(member, auth.auth.post, 5).catch(() => []);
   const regionTasks = await listVisibleOrgTasks(member, auth.auth.post, 12).catch(() => []);
@@ -95,21 +92,8 @@ homeRouter.get('/', async (req, res) => {
     return d.toDateString() === now.toDateString() || t.status === 'OVERDUE';
   });
 
-  const mandalIds = mandalMembers.map((row) => row.id);
-  const mandalLedger = mandalIds.length
-    ? await prisma.pointLedgerEntry.findMany({
-        where: { memberId: { in: mandalIds }, periodMonth: monthStart, pending: false },
-        select: { memberId: true, direction: true, points: true },
-      })
-    : [];
-  const scores = new Map<string, number>(mandalIds.map((id) => [id, 0]));
-  for (const entry of mandalLedger) {
-    const delta = entry.direction === 'CREDIT' ? entry.points : -entry.points;
-    scores.set(entry.memberId, (scores.get(entry.memberId) ?? 0) + delta);
-  }
-  const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  const mandalRank = Math.max(ranked.findIndex(([id]) => id === member.id) + 1, 1);
-  const mandalSize = Math.max(mandalIds.length, 1);
+  const mandalRank = localBoard.rank;
+  const mandalSize = localBoard.total;
 
   const weakest = [...healthComponents].sort((a, b) => a.score / a.maxScore - b.score / b.maxScore)[0];
   const lastReview = lastWork?.reviews[0];
@@ -128,6 +112,8 @@ homeRouter.get('/', async (req, res) => {
       pendingPoints,
       mandalRank,
       mandalSize,
+      leaderboardScope: localBoard.scope,
+      leaderboardArea: localBoard.name,
       boothScore: member.booth?.healthScore ?? 0,
       boothWeakest: weakest?.detail ?? weakest?.label ?? null,
       pannaAppointed,
