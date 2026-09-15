@@ -83,7 +83,7 @@ homeRouter.get('/', async (req, res) => {
     issueSyncTimestamp(),
   ]);
   const upcomingEvents = await listVisibleEvents(member, auth.auth.post, 5).catch(() => []);
-  const regionTasks = await listVisibleOrgTasks(member, 12).catch(() => []);
+  const regionTasks = await listVisibleOrgTasks(member, auth.auth.post, 12).catch(() => []);
   const activeEngagement = await findActiveEngagement(member.id).catch(() => null);
   const activityEvent = await findActiveActivityEvent(member.id).catch(() => null);
 

@@ -9,6 +9,7 @@ import type {
 } from '@prisma/client';
 import { mediaPublicUrl } from '../../lib/storage.js';
 import { inviteCodeFrom, membershipNumberFromRowId } from '../../lib/membership.js';
+import { primaryPost } from '../admin/admin.posts.js';
 
 type MemberWithGraph = Member & {
   booth?:
@@ -61,7 +62,7 @@ export function serializeBooth(
 }
 
 export function serializeMember(member: MemberWithGraph) {
-  const primary = member.posts?.find((p) => p.isPrimary) ?? member.posts?.[0];
+  const post = primaryPost(member, member.posts ?? []);
   return {
     id: member.id,
     rowId: member.rowId,
@@ -79,7 +80,15 @@ export function serializeMember(member: MemberWithGraph) {
     photoUrl: member.photoUrl ? mediaPublicUrl(member.photoUrl) : null,
     address: member.address,
     pincode: member.pincode,
+    latitude: member.latitude == null ? null : Number(member.latitude),
+    longitude: member.longitude == null ? null : Number(member.longitude),
     voterId: member.voterId,
+    profileComplete: Boolean(
+      member.fullName.trim().length >= 2 &&
+        /^\d{6}$/.test(member.pincode ?? '') &&
+        Boolean(member.stateId) &&
+        Boolean(member.assemblyId),
+    ),
     whatsappOptIn: member.whatsappOptIn,
     contributionType: member.contributionType,
     referralCode: member.referralCode,
@@ -87,7 +96,7 @@ export function serializeMember(member: MemberWithGraph) {
     volunteerMode: member.volunteerMode,
     weeklyHours: member.weeklyHours,
     validTo: member.validTo,
-    post: member.isSuperAdmin ? 'SUPER_ADMIN' : (primary?.post ?? 'MEMBER'),
+    post,
     stateId: member.stateId,
     regionId: member.regionId,
     districtId: member.districtId,
@@ -113,6 +122,8 @@ export function serializeMember(member: MemberWithGraph) {
           membershipNumber: member.recruitedBy.membershipNumber ?? membershipNumberFromRowId(member.recruitedBy.rowId),
         }
       : null,
+    isLoggedIn: member.isLoggedIn,
+    lastLoginAt: member.lastLoginAt,
     lastActiveAt: member.lastActiveAt,
     createdAt: member.createdAt,
   };

@@ -10,6 +10,8 @@ coverage/
 .env.example
 *.pem
 *.p12
+firebase-service-account.json
+firebase-debug.log
 
 # Logs
 logs/

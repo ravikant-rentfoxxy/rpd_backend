@@ -338,7 +338,7 @@ adminRouter.delete('/members/:id/posts/:postId', async (req, res) => {
 adminRouter.get('/region-posts', async (_req, res) => {
   const rows = await prisma.regionPost.findMany({
     where: { deletedAt: null },
-    include: { author: { select: { fullName: true, mobileE164: true } }, issue: true },
+    include: { author: { select: { fullName: true, mobileE164: true } }, issue: true, subIssue: true },
     orderBy: { createdAt: 'desc' },
     take: 80,
   });
@@ -354,6 +354,7 @@ adminRouter.get('/region-posts', async (_req, res) => {
       authorName: row.author.fullName,
       authorMobile: row.author.mobileE164,
       issueName: row.issue.name,
+      subIssueName: row.subIssue?.name ?? null,
       issuePriority: row.issue.priority,
     })),
   });

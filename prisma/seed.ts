@@ -157,6 +157,7 @@ async function main() {
   await prisma.pointRule.createMany({
     data: [
       { source: PointSource.MEMBER_VERIFIED, points: 10, unitLabel: 'member' },
+      { source: PointSource.MEMBER_ADDED, points: 1, unitLabel: 'member' },
       { source: PointSource.MEETING_HELD, points: 25, unitLabel: 'meeting' },
       { source: PointSource.GRIHA_SAMPARK, points: 15, unitLabel: '10 homes' },
       { source: PointSource.PENALTY, points: 50, unitLabel: 'repeat case' },

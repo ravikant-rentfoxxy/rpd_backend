@@ -26,6 +26,9 @@ const schema = z.object({
   BUNNY_STREAM_LIBRARY_ID: z.string().min(1),
   BUNNY_STREAM_API_KEY: z.string().min(1),
   BUNNY_STREAM_CDN_HOSTNAME: z.string().min(1),
+  FIREBASE_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 });
 
 const parsed = schema.safeParse(process.env);

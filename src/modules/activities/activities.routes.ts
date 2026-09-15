@@ -6,11 +6,12 @@ import { haversineMetres, toNumber } from '../../lib/geo.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
+import { notifyActivityRecorded } from '../../lib/push.js';
 
 const createSchema = z.object({
   clientUuid: z.string().uuid(),
   type: z.enum(['MEETING', 'ADD_MEMBER', 'GRIHA_SAMPARK', 'PUBLIC_PROGRAMME', 'TRAINING', 'OTHER']),
-  boothId: z.string().uuid(),
+  boothId: z.string().uuid().optional(),
   occurredAt: z.string().datetime(),
   notes: z.string().max(2000).optional(),
   backdateReason: z.string().max(400).optional(),
@@ -67,8 +68,11 @@ activitiesRouter.post('/', validate(createSchema), async (req, res) => {
   const existing = await prisma.syncIdempotency.findUnique({ where: { clientUuid: body.clientUuid } });
   if (existing) return created(res, existing.response);
 
-  const booth = await prisma.booth.findFirst({ where: { id: body.boothId, deletedAt: null } });
-  if (!booth) throw notFound('Booth not found');
+  const boothId = body.boothId ?? auth.member.boothId ?? undefined;
+  const booth = boothId
+    ? await prisma.booth.findFirst({ where: { id: boothId, deletedAt: null } })
+    : null;
+  if (boothId && !booth) throw notFound('Booth not found');
 
   const occurredAt = new Date(body.occurredAt);
   const hoursAgo = (Date.now() - occurredAt.getTime()) / 36e5;
@@ -78,7 +82,7 @@ activitiesRouter.post('/', validate(createSchema), async (req, res) => {
 
   let distanceMetres: number | null = null;
   let reviewFlag = false;
-  if (body.latitude != null && body.longitude != null) {
+  if (booth && body.latitude != null && body.longitude != null) {
     distanceMetres = haversineMetres(
       body.latitude,
       body.longitude,
@@ -95,7 +99,7 @@ activitiesRouter.post('/', validate(createSchema), async (req, res) => {
     data: {
       clientUuid: body.clientUuid,
       actorId: auth.member.id,
-      boothId: booth.id,
+      boothId: booth?.id ?? null,
       type: body.type,
       status: 'QUEUED',
       occurredAt,
@@ -127,10 +131,12 @@ activitiesRouter.post('/', validate(createSchema), async (req, res) => {
     include: { booth: true },
   });
 
-  await prisma.booth.update({
-    where: { id: booth.id },
-    data: { lastActivityAt: occurredAt },
-  });
+  if (booth) {
+    await prisma.booth.update({
+      where: { id: booth.id },
+      data: { lastActivityAt: occurredAt },
+    });
+  }
 
   const pendingPoints =
     body.type === 'MEETING' && activity.attendeeCount >= 10
@@ -160,6 +166,16 @@ activitiesRouter.post('/', validate(createSchema), async (req, res) => {
   };
   await prisma.syncIdempotency.create({
     data: { clientUuid: body.clientUuid, route: 'POST /activities', response: payload },
+  });
+  notifyActivityRecorded({
+    actorId: auth.member.id,
+    activityId: activity.id,
+    type: body.type,
+    occurredAt,
+    place: booth?.name ?? booth?.landmark ?? null,
+    stateId: auth.member.stateId,
+    districtId: auth.member.districtId,
+    assemblyId: auth.member.assemblyId,
   });
   return created(res, payload);
 });

@@ -21,6 +21,8 @@ import { eventsRouter } from './modules/events/events.routes.js';
 import { engagementRouter } from './modules/engagement/engagement.routes.js';
 import { activityEventsRouter } from './modules/activity-events/activity-events.routes.js';
 import { adminRouter } from './modules/admin/admin.routes.js';
+import { leaderboardRouter } from './modules/leaderboard/leaderboard.routes.js';
+import { notificationsRouter } from './modules/notifications/notifications.routes.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { mediaPublicUrl } from './lib/storage.js';
 
@@ -78,6 +80,8 @@ export function createApp() {
   api.use('/engagement', engagementRouter);
   api.use('/activity-events', activityEventsRouter);
   api.use('/admin', adminRouter);
+  api.use('/leaderboard', leaderboardRouter);
+  api.use('/notifications', notificationsRouter);
   api.get('/media/stream/:id', (req, res) => {
     res.redirect(302, mediaPublicUrl(`stream/${req.params.id}`));
   });

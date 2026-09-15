@@ -32,9 +32,18 @@ const postMedia = new Set([
   'video/3gpp',
 ]);
 
+const postDocuments = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
 export const postMediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 80 * 1024 * 1024, files: 2 },
+  limits: { fileSize: 80 * 1024 * 1024, files: 3 },
   fileFilter: (_req, file, cb) => {
     if (file.fieldname === 'thumbnail') {
       if (file.mimetype.startsWith('image/') || file.mimetype === 'application/octet-stream') {
@@ -42,6 +51,14 @@ export const postMediaUpload = multer({
         return;
       }
       cb(badRequest('Use a JPG thumbnail'));
+      return;
+    }
+    if (file.fieldname === 'document') {
+      if (postDocuments.has(file.mimetype) || file.mimetype === 'application/octet-stream') {
+        cb(null, true);
+        return;
+      }
+      cb(badRequest('Use a PDF, Word or photo document'));
       return;
     }
     if (!postMedia.has(file.mimetype) && file.mimetype !== 'application/octet-stream') {
@@ -55,4 +72,5 @@ export const postMediaUpload = multer({
 export const postMediaFields = postMediaUpload.fields([
   { name: 'file', maxCount: 1 },
   { name: 'thumbnail', maxCount: 1 },
+  { name: 'document', maxCount: 1 },
 ]);

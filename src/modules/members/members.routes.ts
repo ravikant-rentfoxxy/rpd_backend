@@ -12,6 +12,7 @@ import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { photoUpload } from '../../middleware/upload.js';
 import { validate } from '../../middleware/validate.js';
 import { serializeMember } from './member.serialize.js';
+import { assertPincodeMatchesState } from '../geo/pincode.js';
 
 const isoDate = z
   .string()
@@ -38,6 +39,8 @@ const registerFields = z.object({
   photoUrl: z.string().min(1).nullish(),
   address: z.string().trim().min(3).max(400).nullish(),
   pincode: z.string().regex(/^\d{6}$/).nullish(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
 });
 
 const registerSchema = registerFields.refine((value) => Boolean(value.boothId || value.assemblyId), {
@@ -46,7 +49,8 @@ const registerSchema = registerFields.refine((value) => Boolean(value.boothId ||
 
 const recruitSchema = registerFields.extend({
   mobile: z.string().regex(/^[6-9]\d{9}$/),
-  boothId: z.string().uuid().optional(),
+  pincode: z.string().regex(/^\d{6}$/),
+  stateId: z.string().uuid(),
 });
 
 const recruitGraph = {
@@ -54,6 +58,34 @@ const recruitGraph = {
   posts: { where: { endedAt: null } },
   recruitedBy: { select: { id: true, fullName: true, membershipNumber: true, rowId: true } },
 } as const;
+
+async function creditMemberAdded(recruiterId: string, recruitId: string) {
+  const note = `Member added · ${recruitId}`;
+  const existing = await prisma.pointLedgerEntry.findFirst({
+    where: { memberId: recruiterId, source: 'MEMBER_ADDED', note },
+  });
+  if (existing) return 0;
+  const rule = await prisma.pointRule.upsert({
+    where: { source: 'MEMBER_ADDED' },
+    update: {},
+    create: { source: 'MEMBER_ADDED', points: 1, unitLabel: 'member', active: true },
+  });
+  const points = rule.active ? rule.points : 1;
+  if (points <= 0) return 0;
+  const now = new Date();
+  await prisma.pointLedgerEntry.create({
+    data: {
+      memberId: recruiterId,
+      source: 'MEMBER_ADDED',
+      direction: 'CREDIT',
+      points,
+      pending: false,
+      note,
+      periodMonth: new Date(now.getFullYear(), now.getMonth(), 1),
+    },
+  });
+  return points;
+}
 
 async function recruitsPayload(recruiterId: string) {
   const recruits = await prisma.member.findMany({
@@ -103,6 +135,13 @@ const updateProfileSchema = z.object({
   voterId: voterIdNumber.nullish(),
   boothId: z.string().uuid().nullish(),
   assemblyId: z.string().uuid().nullish(),
+  districtId: z.string().uuid().nullish(),
+  stateId: z.string().uuid().nullish(),
+  latitude: z.coerce.number().min(-90).max(90).nullish(),
+  longitude: z.coerce.number().min(-180).max(180).nullish(),
+  whatsappOptIn: z.boolean().optional(),
+  acceptedRequiredConsent: z.boolean().optional(),
+  fcmToken: z.string().trim().min(20).max(512).optional(),
 });
 
 membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
@@ -121,6 +160,11 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
     districtId?: string | null;
     regionId?: string | null;
     stateId?: string | null;
+    latitude?: number;
+    longitude?: number;
+    whatsappOptIn?: boolean;
+    fcmToken?: string;
+    fcmTokenLastUsedAt?: Date;
   } = {};
 
   if (body.fullName) data.fullName = body.fullName;
@@ -129,6 +173,15 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
   if (body.address !== undefined) data.address = body.address?.trim() || null;
   if (body.pincode !== undefined) data.pincode = body.pincode?.trim() || null;
   if (body.voterId !== undefined) data.voterId = body.voterId || null;
+  if (body.latitude != null && body.longitude != null) {
+    data.latitude = body.latitude;
+    data.longitude = body.longitude;
+  }
+  if (body.whatsappOptIn !== undefined) data.whatsappOptIn = body.whatsappOptIn;
+  if (body.fcmToken) {
+    data.fcmToken = body.fcmToken;
+    data.fcmTokenLastUsedAt = new Date();
+  }
 
   if (data.voterId) {
     const taken = await prisma.member.findFirst({
@@ -170,6 +223,24 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
         data: { memberCount: { increment: 1 } },
       });
     }
+  } else if (body.districtId) {
+    const district = await prisma.district.findFirst({ where: { id: body.districtId } });
+    if (!district) throw notFound('District not found');
+    data.districtId = district.id;
+    data.regionId = district.regionId ?? null;
+    data.stateId = district.stateId;
+  } else if (body.stateId) {
+    const state = await prisma.state.findFirst({ where: { id: body.stateId } });
+    if (!state) throw notFound('State not found');
+    data.stateId = state.id;
+  }
+
+  if (body.pincode !== undefined || body.stateId !== undefined) {
+    const pin = (data.pincode ?? auth.member.pincode)?.trim() ?? '';
+    const nextStateId = data.stateId ?? auth.member.stateId;
+    if (/^\d{6}$/.test(pin) && nextStateId) {
+      await assertPincodeMatchesState(pin, nextStateId);
+    }
   }
 
   const member = await prisma.member.update({
@@ -180,6 +251,55 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
   if (data.stateId) {
     await persistMembershipNumber(member.id, member.rowId, data.stateId);
   }
+
+  const locale = auth.member.locale ?? 'HI';
+  if (body.acceptedRequiredConsent) {
+    const required = await prisma.consentDocument.findFirst({
+      where: { kind: 'MEMBERSHIP_REQUIRED', isCurrent: true, locale },
+    });
+    if (required) {
+      const existing = await prisma.memberConsent.findFirst({
+        where: { memberId: auth.member.id, documentId: required.id },
+      });
+      if (!existing) {
+        await prisma.memberConsent.create({
+          data: {
+            memberId: auth.member.id,
+            documentId: required.id,
+            kind: 'MEMBERSHIP_REQUIRED',
+            locale,
+            accepted: true,
+            ipAddress: req.ip ?? null,
+            userAgent: req.get('user-agent') ?? null,
+          },
+        });
+      }
+    }
+  }
+  if (body.whatsappOptIn) {
+    const optional = await prisma.consentDocument.findFirst({
+      where: { kind: 'WHATSAPP_UPDATES', isCurrent: true, locale },
+    });
+    if (optional) {
+      const existing = await prisma.memberConsent.findFirst({
+        where: { memberId: auth.member.id, documentId: optional.id },
+      });
+      if (!existing) {
+        await prisma.memberConsent.create({
+          data: {
+            memberId: auth.member.id,
+            documentId: optional.id,
+            kind: 'WHATSAPP_UPDATES',
+            locale,
+            accepted: true,
+            ipAddress: req.ip ?? null,
+            userAgent: req.get('user-agent') ?? null,
+          },
+        });
+      }
+    }
+  }
+
   const fresh = data.stateId
     ? await prisma.member.findUniqueOrThrow({ where: { id: member.id }, include: memberGraph })
     : member;
@@ -273,6 +393,8 @@ membersRouter.post('/register', validate(registerSchema), async (req, res) => {
       photoUrl: body.photoUrl ?? auth.member.photoUrl,
       address: body.address ?? null,
       pincode: body.pincode ?? null,
+      latitude: body.latitude,
+      longitude: body.longitude,
     },
     include: { booth: { include: { mandal: true, assembly: true, district: { include: { state: true } } } }, state: true, district: true, assembly: true, posts: true, card: true },
   });
@@ -358,29 +480,34 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
     });
   }
 
-  const boothId = body.boothId ?? auth.member.boothId;
-  if (!boothId) throw badRequest('Your booth is missing. Finish your own membership first.');
-  const booth = await prisma.booth.findFirst({ where: { id: boothId, deletedAt: null } });
-  if (!booth) throw notFound('Booth not found');
+  const boothId = body.boothId ?? auth.member.boothId ?? null;
+  const booth = boothId
+    ? await prisma.booth.findFirst({ where: { id: boothId, deletedAt: null } })
+    : null;
+  if (boothId && !booth) throw notFound('Booth not found');
 
   const required = await prisma.consentDocument.findFirst({
     where: { kind: 'MEMBERSHIP_REQUIRED', isCurrent: true, locale: body.locale },
   });
   if (!required) throw badRequest('Consent document is out of date');
 
-  const boothDistrict = booth.districtId
-    ? await prisma.district.findFirst({ where: { id: booth.districtId }, include: { state: true } })
+  const districtId = booth?.districtId ?? auth.member.districtId ?? null;
+  const boothDistrict = districtId
+    ? await prisma.district.findFirst({ where: { id: districtId }, include: { state: true } })
     : null;
-  const recruitStateId = boothDistrict?.stateId ?? boothDistrict?.state?.id ?? null;
+  const state = await prisma.state.findFirst({ where: { id: body.stateId } });
+  if (!state) throw notFound('State not found');
+  await assertPincodeMatchesState(body.pincode, state.id);
+  const recruitStateId = state.id;
   const shared = {
     fullName: body.fullName,
     dateOfBirth: parseIsoDate(body.dateOfBirth),
     gender: body.gender,
     locale: body.locale,
-    boothId: booth.id,
-    mandalId: booth.mandalId,
-    assemblyId: booth.assemblyId,
-    districtId: booth.districtId,
+    boothId: booth?.id ?? null,
+    mandalId: booth?.mandalId ?? auth.member.mandalId ?? null,
+    assemblyId: booth?.assemblyId ?? auth.member.assemblyId ?? null,
+    districtId,
     stateId: recruitStateId,
     status: 'VERIFIED' as const,
     whatsappOptIn: body.whatsappOptIn,
@@ -424,7 +551,16 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
   });
   if (!hasPost) {
     await prisma.memberPost.create({
-      data: { memberId: member.id, post: 'MEMBER', boothId: booth.id, isPrimary: true },
+      data: {
+        memberId: member.id,
+        post: 'MEMBER',
+        boothId: booth?.id ?? null,
+        mandalId: booth?.mandalId ?? auth.member.mandalId ?? null,
+        assemblyId: booth?.assemblyId ?? auth.member.assemblyId ?? null,
+        districtId,
+        stateId: recruitStateId,
+        isPrimary: true,
+      },
     });
   }
 
@@ -444,15 +580,18 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
     });
   }
 
-  if (existing?.boothId !== booth.id) {
+  if (booth && existing?.boothId !== booth.id) {
     await prisma.booth.update({
       where: { id: booth.id },
       data: { memberCount: { increment: 1 } },
     });
   }
 
+  const pointsAwarded = await creditMemberAdded(auth.member.id, member.id);
+
   return created(res, {
     member: serializeMember(member),
+    pointsAwarded,
     ...(await recruitsPayload(auth.member.id)),
   });
 });

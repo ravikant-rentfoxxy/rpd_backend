@@ -107,6 +107,11 @@ enum RegionPostMedia {
   VIDEO
 }
 
+enum RegionPostStatus {
+  OPEN
+  RESOLVED
+}
+
 enum OtpChannel {
   WHATSAPP
   SMS
@@ -119,6 +124,7 @@ enum OtpPurpose {
 
 enum PointSource {
   MEMBER_VERIFIED
+  MEMBER_ADDED
   MEETING_HELD
   GRIHA_SAMPARK
   PUBLIC_PROGRAMME
@@ -375,6 +381,8 @@ model Member {
   photoUrl           String?      @map("photo_url") @db.VarChar(512)
   address            String?      @db.VarChar(400)
   pincode            String?      @db.VarChar(6)
+  latitude           Decimal?     @db.Decimal(10, 7)
+  longitude          Decimal?     @db.Decimal(10, 7)
   voterId            String?      @unique @map("voter_id") @db.VarChar(20)
   whatsappOptIn      Boolean      @default(false) @map("whatsapp_opt_in")
   contributionType   ContributionType? @map("contribution_type")
@@ -389,6 +397,10 @@ model Member {
   mandalId           String?      @map("mandal_id") @db.Uuid
   boothId            String?      @map("booth_id") @db.Uuid
   recruitedById      String?      @map("recruited_by_id") @db.Uuid
+  fcmToken           String?      @map("fcm_token") @db.VarChar(512)
+  fcmTokenLastUsedAt DateTime?    @map("fcm_token_last_used_at") @db.Timestamptz(6)
+  isLoggedIn         Boolean      @default(false) @map("is_logged_in")
+  lastLoginAt        DateTime?    @map("last_login_at") @db.Timestamptz(6)
   lastActiveAt       DateTime?    @map("last_active_at") @db.Timestamptz(6)
   createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -417,13 +429,18 @@ model Member {
   attendees   ActivityAttendee[]
   auditLogs   AuditLog[]
   regionPosts RegionPost[]
+  assignedRegionPosts   RegionPost[] @relation("RegionPostAssignee")
+  assignedRegionPostsBy RegionPost[] @relation("RegionPostAssigner")
+  resolvedRegionPosts   RegionPost[] @relation("RegionPostResolver")
   orgEventsHosted OrgEvent[]     @relation("OrgEventHost")
   orgEventJoins   OrgEventJoin[]
   orgTasksHosted  OrgTask[]      @relation("OrgTaskHost")
+  orgTaskStarts   OrgTaskStart[]
   engagementEventsCreated EngagementEvent[] @relation("EngagementEventCreator")
   engagementEntries       EngagementEntry[]
   activityEventResponses  ActivityEventResponse[]
   activityEventsCreated   ActivityEvent[] @relation("ActivityEventCreator")
+  notifications           MemberNotification[]
 
   @@index([boothId])
   @@index([mandalId])
@@ -473,17 +490,23 @@ model MemberPost {
 model PostIssue {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code      String   @unique @db.VarChar(40)
-  name      String   @db.VarChar(80)
-  nameHi    String   @map("name_hi") @db.VarChar(80)
-  nameBho   String   @map("name_bho") @db.VarChar(80)
-  priority  Int      @unique
+  name      String   @db.VarChar(160)
+  nameHi    String   @map("name_hi") @db.VarChar(160)
+  nameBho   String   @map("name_bho") @db.VarChar(160)
+  priority  Int
+  sortOrder Int      @default(0) @map("sort_order")
   band      String   @db.VarChar(24)
-  reason    String   @db.VarChar(240)
+  reason    String   @db.VarChar(400)
+  parentId  String?  @map("parent_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  posts RegionPost[]
+  parent   PostIssue?  @relation("IssueChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children PostIssue[] @relation("IssueChildren")
+  posts    RegionPost[] @relation("RegionPostIssue")
+  subPosts RegionPost[] @relation("RegionPostSubIssue")
 
-  @@index([priority])
+  @@index([priority, sortOrder])
+  @@index([parentId, sortOrder])
   @@map("post_issues")
 }
 
@@ -499,26 +522,43 @@ model RegionPost {
   clientUuid  String          @unique @map("client_uuid") @db.Uuid
   authorId    String          @map("author_id") @db.Uuid
   issueId     String          @map("issue_id") @db.Uuid
+  subIssueId  String?         @map("sub_issue_id") @db.Uuid
   description String          @default("") @db.VarChar(2000)
   mediaType     RegionPostMedia @map("media_type")
   mediaKey      String          @map("media_key") @db.VarChar(512)
   thumbnailKey  String?         @map("thumbnail_key") @db.VarChar(512)
+  documentKey   String?         @map("document_key") @db.VarChar(512)
+  documentName  String?         @map("document_name") @db.VarChar(200)
   latitude      Decimal?        @db.Decimal(9, 6)
   longitude   Decimal?        @db.Decimal(9, 6)
   districtId  String?         @map("district_id") @db.Uuid
   assemblyId  String?         @map("assembly_id") @db.Uuid
   boothId     String?         @map("booth_id") @db.Uuid
   regionLabel String?         @map("region_label") @db.VarChar(200)
+  assignedToId String?        @map("assigned_to_id") @db.Uuid
+  assignedById String?        @map("assigned_by_id") @db.Uuid
+  assignedAt   DateTime?      @map("assigned_at") @db.Timestamptz(6)
+  assigneePost String?        @map("assignee_post") @db.VarChar(40)
+  status       RegionPostStatus @default(OPEN)
+  resolvedAt   DateTime?      @map("resolved_at") @db.Timestamptz(6)
+  resolvedById String?        @map("resolved_by_id") @db.Uuid
   createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   deletedAt   DateTime?       @map("deleted_at") @db.Timestamptz(6)
 
-  author Member    @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  issue  PostIssue @relation(fields: [issueId], references: [id])
+  author     Member     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  issue      PostIssue  @relation("RegionPostIssue", fields: [issueId], references: [id])
+  subIssue   PostIssue? @relation("RegionPostSubIssue", fields: [subIssueId], references: [id])
+  assignedTo Member?    @relation("RegionPostAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedBy Member?    @relation("RegionPostAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+  resolvedBy Member?    @relation("RegionPostResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
 
   @@index([authorId, createdAt])
   @@index([districtId, createdAt])
   @@index([assemblyId, createdAt])
   @@index([issueId, createdAt])
+  @@index([subIssueId, createdAt])
+  @@index([assignedToId, assignedAt])
+  @@index([status, createdAt])
   @@map("region_posts")
 }
 
@@ -625,7 +665,7 @@ model Activity {
   id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientUuid      String         @unique @map("client_uuid") @db.Uuid
   actorId         String         @map("actor_id") @db.Uuid
-  boothId         String         @map("booth_id") @db.Uuid
+  boothId         String?        @map("booth_id") @db.Uuid
   type            ActivityType
   status          ActivityStatus @default(QUEUED)
   occurredAt      DateTime       @map("occurred_at") @db.Timestamptz(6)
@@ -644,7 +684,7 @@ model Activity {
   deletedAt       DateTime?      @map("deleted_at") @db.Timestamptz(6)
 
   actor     Member             @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Restrict)
-  booth     Booth              @relation(fields: [boothId], references: [id], onDelete: Restrict)
+  booth     Booth?             @relation(fields: [boothId], references: [id], onDelete: Restrict)
   photos    ActivityPhoto[]
   attendees ActivityAttendee[]
   reviews   ActivityReview[]
@@ -705,18 +745,21 @@ model ActivityReview {
 
 model Meeting {
   id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  boothId    String        @map("booth_id") @db.Uuid
+  code       String        @unique @db.VarChar(16)
+  boothId    String?       @map("booth_id") @db.Uuid
   hostId     String        @map("host_id") @db.Uuid
   activityId String?       @unique @map("activity_id") @db.Uuid
   title      String        @db.VarChar(200)
   agenda     String        @db.Text
   startsAt   DateTime      @map("starts_at") @db.Timestamptz(6)
   venue      String        @db.VarChar(200)
+  latitude   Decimal?      @db.Decimal(9, 6)
+  longitude  Decimal?      @db.Decimal(9, 6)
   status     MeetingStatus @default(SCHEDULED)
   createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  booth    Booth             @relation(fields: [boothId], references: [id], onDelete: Restrict)
+  booth    Booth?            @relation(fields: [boothId], references: [id], onDelete: Restrict)
   host     Member            @relation(fields: [hostId], references: [id], onDelete: Restrict)
   activity Activity?         @relation(fields: [activityId], references: [id], onDelete: SetNull)
   invitees MeetingInvitee[]
@@ -867,12 +910,27 @@ model OrgTask {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  host Member @relation("OrgTaskHost", fields: [hostId], references: [id], onDelete: Restrict)
+  host   Member         @relation("OrgTaskHost", fields: [hostId], references: [id], onDelete: Restrict)
+  starts OrgTaskStart[]
 
   @@index([hostId])
   @@index([createdAt])
   @@index([stateId, districtId, assemblyId])
   @@map("org_tasks")
+}
+
+model OrgTaskStart {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId    String   @map("task_id") @db.Uuid
+  memberId  String   @map("member_id") @db.Uuid
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+
+  task   OrgTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  member Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, memberId])
+  @@index([memberId])
+  @@map("org_task_starts")
 }
 
 model OrgEvent {
@@ -1055,4 +1113,21 @@ model ActivityEventResponse {
   @@index([memberId])
   @@index([optionId])
   @@map("activity_event_responses")
+}
+
+model MemberNotification {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memberId  String    @map("member_id") @db.Uuid
+  title     String    @db.VarChar(200)
+  body      String    @db.VarChar(500)
+  type      String    @db.VarChar(40)
+  refId     String?   @map("ref_id") @db.Uuid
+  seenAt    DateTime? @map("seen_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, createdAt])
+  @@index([memberId, seenAt])
+  @@map("member_notifications")
 }

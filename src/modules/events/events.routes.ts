@@ -9,6 +9,7 @@ import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { photoUpload } from '../../middleware/upload.js';
 import { actorEventRank, canCreateOrgEvent, canSeeOrgEvent, type EventViewer } from './event.rank.js';
+import { notifyEventCreated } from '../../lib/push.js';
 
 const EVENT_TYPES = ['MEETING', 'GRIHA_SAMPARK', 'PUBLIC_PROGRAMME', 'TRAINING'] as const;
 
@@ -151,6 +152,17 @@ eventsRouter.post('/', photoUpload.single('file'), async (req, res) => {
   const event = await prisma.orgEvent.findFirstOrThrow({
     where: { id: createdEvent.id },
     include: eventInclude,
+  });
+  notifyEventCreated({
+    hostId: auth.member.id,
+    eventId: event.id,
+    type: event.type,
+    startsAt: event.startsAt,
+    venue: event.venue,
+    stateId: event.stateId,
+    districtId: event.districtId,
+    assemblyId: event.assemblyId,
+    hostRank: event.hostRank,
   });
   return created(res, { event: serializeOrgEvent(event, auth.member.id) });
 });

@@ -10,7 +10,9 @@ import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { serializeMember } from '../members/member.serialize.js';
 import { membershipNumberFromRowId } from '../../lib/membership.js';
+import { primaryPost } from '../admin/admin.posts.js';
 import { touchLastActive } from '../home/last-active.js';
+import { fcmTokenClear, fcmTokenWrite } from '../../lib/push.js';
 
 const mobileSchema = z.object({
   mobile: z
@@ -23,6 +25,7 @@ const mobileSchema = z.object({
 const verifySchema = z.object({
   mobile: z.string().trim().regex(/^[6-9]\d{9}$/),
   code: z.string().trim().regex(/^\d{6}$/),
+  fcmToken: z.string().trim().min(20).max(512).optional(),
 });
 
 const refreshSchema = z.object({
@@ -119,7 +122,7 @@ authRouter.post('/otp/request', validate(mobileSchema), async (req, res) => {
 });
 
 authRouter.post('/otp/verify', validate(verifySchema), async (req, res) => {
-  const { mobile, code } = req.body as z.infer<typeof verifySchema>;
+  const { mobile, code, fcmToken } = req.body as z.infer<typeof verifySchema>;
   const mobileE164 = toE164(mobile);
 
   const challenge = await prisma.otpChallenge.findFirst({
@@ -174,15 +177,27 @@ authRouter.post('/otp/verify', validate(verifySchema), async (req, res) => {
     });
   }
 
-  const primary = member.posts.find((p) => p.isPrimary) ?? member.posts[0];
-  const tokens = await issueTokens(member.id, primary?.post ?? 'MEMBER', member.boothId, req);
+  member = await prisma.member.update({
+    where: { id: member.id },
+    data: {
+      isLoggedIn: true,
+      lastLoginAt: new Date(),
+      ...(fcmToken ? fcmTokenWrite(fcmToken) : {}),
+    },
+    include: { posts: { where: { endedAt: null }, orderBy: { startedAt: 'desc' } }, booth: true },
+  });
+
+  const post = primaryPost(member, member.posts);
+  const tokens = await issueTokens(member.id, post, member.boothId, req);
+  const serialized = serializeMember(member);
   const verification = verificationOf(member.status, member.isSuperAdmin);
 
   return ok(res, {
     tokens,
+    post: serialized.post,
     ...verification,
     isNewMember: !member.isSuperAdmin && (member.status === 'DRAFT' || !member.fullName),
-    member: serializeMember(member),
+    member: serialized,
   });
 });
 
@@ -204,9 +219,22 @@ authRouter.post('/refresh', validate(refreshSchema), async (req, res) => {
     where: { id: row.memberId },
     include: { posts: { where: { endedAt: null } } },
   });
-  const primary = member.posts.find((p) => p.isPrimary) ?? member.posts[0];
-  const tokens = await issueTokens(member.id, primary?.post ?? 'MEMBER', member.boothId, req);
-  return ok(res, { tokens, ...verificationOf(member.status, member.isSuperAdmin) });
+  const post = primaryPost(member, member.posts);
+  const tokens = await issueTokens(member.id, post, member.boothId, req);
+  return ok(res, { tokens, post, ...verificationOf(member.status, member.isSuperAdmin) });
+});
+
+authRouter.post('/logout', requireAuth, async (req, res) => {
+  const { member } = req as AuthedRequest;
+  await prisma.member.update({
+    where: { id: member.id },
+    data: { ...fcmTokenClear(), isLoggedIn: false },
+  });
+  await prisma.refreshToken.updateMany({
+    where: { memberId: member.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return ok(res, { loggedOut: true });
 });
 
 authRouter.get('/me', requireAuth, async (req, res) => {
@@ -223,5 +251,10 @@ authRouter.get('/me', requireAuth, async (req, res) => {
       card: true,
     },
   });
-  return ok(res, { member: serializeMember(full), ...verificationOf(full.status, full.isSuperAdmin) });
+  const serialized = serializeMember(full);
+  return ok(res, {
+    member: serialized,
+    post: serialized.post,
+    ...verificationOf(full.status, full.isSuperAdmin),
+  });
 });

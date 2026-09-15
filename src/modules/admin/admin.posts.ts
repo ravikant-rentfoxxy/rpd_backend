@@ -56,7 +56,13 @@ export function actorRank(member: Pick<Member, 'isSuperAdmin'>, posts: Pick<Memb
 export function primaryPost(member: Pick<Member, 'isSuperAdmin'>, posts: Pick<MemberPost, 'post' | 'isPrimary' | 'endedAt'>[]) {
   if (member.isSuperAdmin) return 'SUPER_ADMIN';
   const active = posts.filter((row) => !row.endedAt);
-  return (active.find((row) => row.isPrimary) ?? active[0])?.post ?? 'MEMBER';
+  if (!active.length) return 'MEMBER';
+  return active.reduce((best, row) => {
+    const delta = rankOf(row.post) - rankOf(best.post);
+    if (delta > 0) return row;
+    if (delta === 0 && row.isPrimary && !best.isPrimary) return row;
+    return best;
+  }).post;
 }
 
 export function canAssignPost(actor: number, target: number, nextPost: string) {
