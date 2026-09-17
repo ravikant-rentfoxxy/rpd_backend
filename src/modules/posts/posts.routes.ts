@@ -176,22 +176,39 @@ postsRouter.get('/:id/assignees', async (req, res) => {
       id: true,
       fullName: true,
       isSuperAdmin: true,
+      membershipNumber: true,
+      photoUrl: true,
+      district: { select: { name: true } },
+      assembly: { select: { name: true } },
       posts: { where: { endedAt: null }, select: { post: true, isPrimary: true, endedAt: true } },
     },
-    take: 80,
+    take: 200,
     orderBy: { fullName: 'asc' },
   });
-  const items = members
-    .filter((row) => canReceiveAssignment(actorRank(row, row.posts), viewerRank))
-    .map((row) => {
-      const postCode = primaryPost(row, row.posts);
-      return {
-        id: row.id,
-        fullName: row.fullName,
-        post: postCode,
-        postLabel: labelOf(postCode),
-      };
-    });
+  const eligible = members.filter((row) => canReceiveAssignment(actorRank(row, row.posts), viewerRank));
+  // How many open grievances each person already holds, so work can be spread fairly.
+  const workload = eligible.length
+    ? await prisma.regionPost.groupBy({
+        by: ['assignedToId'],
+        where: { deletedAt: null, status: 'OPEN', assignedToId: { in: eligible.map((row) => row.id) } },
+        _count: { _all: true },
+      })
+    : [];
+  const items = eligible.map((row) => {
+    const postCode = primaryPost(row, row.posts);
+    return {
+      id: row.id,
+      fullName: row.fullName,
+      post: postCode,
+      postLabel: labelOf(postCode),
+      rank: actorRank(row, row.posts),
+      membershipNumber: row.membershipNumber,
+      photoUrl: row.photoUrl ? mediaPublicUrl(row.photoUrl) : null,
+      districtName: row.district?.name ?? null,
+      assemblyName: row.assembly?.name ?? null,
+      openAssigned: workload.find((item) => item.assignedToId === row.id)?._count._all ?? 0,
+    };
+  });
   return ok(res, { members: items });
 });
 
