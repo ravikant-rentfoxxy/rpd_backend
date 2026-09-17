@@ -97,3 +97,7 @@ export function createApp() {
   app.use(errorHandler);
   return app;
 }
+
+// Vercel runs the default export as the request handler; src/index.ts starts it as a server.
+const app = createApp();
+export default app;
