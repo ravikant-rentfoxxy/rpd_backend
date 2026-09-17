@@ -942,7 +942,10 @@ model OrgEvent {
   title       String       @db.VarChar(200)
   description String?      @db.Text
   startsAt    DateTime     @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime     @map("ends_at") @db.Timestamptz(6)
   venue       String       @db.VarChar(200)
+  latitude    Decimal?     @db.Decimal(9, 6)
+  longitude   Decimal?     @db.Decimal(9, 6)
   imageUrl    String?      @map("image_url") @db.VarChar(512)
   stateId     String?      @map("state_id") @db.Uuid
   districtId  String?      @map("district_id") @db.Uuid
@@ -963,10 +966,14 @@ model OrgEvent {
 }
 
 model OrgEventJoin {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  eventId   String   @map("event_id") @db.Uuid
-  memberId  String   @map("member_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId          String    @map("event_id") @db.Uuid
+  memberId         String    @map("member_id") @db.Uuid
+  checkedInAt      DateTime? @map("checked_in_at") @db.Timestamptz(6)
+  checkInLatitude  Decimal?  @map("check_in_latitude") @db.Decimal(9, 6)
+  checkInLongitude Decimal?  @map("check_in_longitude") @db.Decimal(9, 6)
+  checkInMetres    Int?      @map("check_in_metres")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   event  OrgEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
   member Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)

@@ -18,6 +18,7 @@ import { consentsRouter } from './modules/consents/consents.routes.js';
 import { geoRouter } from './modules/geo/geo.routes.js';
 import { postsRouter } from './modules/posts/posts.routes.js';
 import { eventsRouter } from './modules/events/events.routes.js';
+import { districtsRouter } from './modules/districts/districts.routes.js';
 import { engagementRouter } from './modules/engagement/engagement.routes.js';
 import { activityEventsRouter } from './modules/activity-events/activity-events.routes.js';
 import { adminRouter } from './modules/admin/admin.routes.js';
@@ -77,6 +78,7 @@ export function createApp() {
   api.use('/geo', geoRouter);
   api.use('/posts', postsRouter);
   api.use('/events', eventsRouter);
+  api.use('/districts', districtsRouter);
   api.use('/engagement', engagementRouter);
   api.use('/activity-events', activityEventsRouter);
   api.use('/admin', adminRouter);

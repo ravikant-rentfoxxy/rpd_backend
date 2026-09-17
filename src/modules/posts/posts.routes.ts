@@ -9,7 +9,8 @@ import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { postMediaFields } from '../../middleware/upload.js';
 import type { Prisma, RegionPostMedia } from '@prisma/client';
-import { actorRank, inMemberScope, labelOf, memberScopeWhere, primaryPost } from '../admin/admin.posts.js';
+import { actorRank, labelOf, primaryPost } from '../admin/admin.posts.js';
+import { assignScopeWhere, canReceiveAssignment, inAssignScope } from './assign.scope.js';
 import { notifyPostAssigned } from '../../lib/push.js';
 import { generatePostSummary } from '../../lib/gemini.js';
 import { mediaPublicUrl } from '../../lib/storage.js';
@@ -169,7 +170,7 @@ postsRouter.get('/:id/assignees', async (req, res) => {
     where: {
       deletedAt: null,
       id: { not: post.authorId },
-      ...memberScopeWhere(auth.member, viewerRank),
+      ...assignScopeWhere(auth.member),
     },
     select: {
       id: true,
@@ -181,7 +182,7 @@ postsRouter.get('/:id/assignees', async (req, res) => {
     orderBy: { fullName: 'asc' },
   });
   const items = members
-    .filter((row) => actorRank(row, row.posts) < viewerRank)
+    .filter((row) => canReceiveAssignment(actorRank(row, row.posts), viewerRank))
     .map((row) => {
       const postCode = primaryPost(row, row.posts);
       return {
@@ -266,10 +267,10 @@ postsRouter.post('/:id/assign', async (req, res) => {
     include: { posts: { where: { endedAt: null } } },
   });
   if (!assignee) throw badRequest('Member not found');
-  if (actorRank(assignee, assignee.posts) >= viewerRank) {
-    throw forbidden('Assign this issue to someone below your level');
+  if (!canReceiveAssignment(actorRank(assignee, assignee.posts), viewerRank)) {
+    throw forbidden('Assign this issue to an office bearer below your level');
   }
-  if (!inMemberScope(auth.member, viewerRank, assignee)) {
+  if (!inAssignScope(auth.member, assignee)) {
     throw forbidden('That member is outside your area');
   }
   const updated = await prisma.regionPost.update({

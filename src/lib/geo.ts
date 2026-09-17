@@ -22,3 +22,11 @@ export function toNumber(value: unknown): number {
   }
   return Number(value);
 }
+
+/**
+ * Rough India bounding box. Rejects obviously wrong positions such as the Android
+ * emulator's default GPS fix (Mountain View, CA) or 0,0 from a failed location read.
+ */
+export function isInIndia(lat: number, lng: number): boolean {
+  return lat >= 6.4 && lat <= 37.6 && lng >= 68.1 && lng <= 97.5;
+}
