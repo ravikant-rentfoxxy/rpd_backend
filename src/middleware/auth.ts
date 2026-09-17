@@ -36,7 +36,7 @@ export function requirePost(...posts: PostType[]) {
       next();
       return;
     }
-    if (!authed.auth || !posts.includes(authed.auth.post)) {
+    if (!authed.auth || !posts.some((post) => post === authed.auth.post)) {
       next(forbidden('This post cannot open this screen'));
       return;
     }

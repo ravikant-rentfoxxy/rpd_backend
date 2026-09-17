@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { PostType } from '@prisma/client';
 import { z } from 'zod';
 import { env, isProd } from '../../config/env.js';
 import { created, ok } from '../../lib/http.js';
@@ -57,7 +58,7 @@ async function issueAdminTokens(
   };
 }
 
-function assertOfficer(member: { isSuperAdmin: boolean; status: string }, posts: { post: Parameters<typeof signAccessToken>[0]['post']; endedAt: Date | null }[]) {
+function assertOfficer(member: { isSuperAdmin: boolean; status: string }, posts: { post: PostType; endedAt: Date | null }[]) {
   const rank = actorRank(member, posts);
   if (!member.isSuperAdmin && member.status !== 'VERIFIED') {
     throw forbidden('Verify your membership before opening the admin portal');

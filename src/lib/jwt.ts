@@ -4,7 +4,7 @@ import type { PostType } from '@prisma/client';
 
 export type AccessClaims = {
   sub: string;
-  post: PostType;
+  post: PostType | 'SUPER_ADMIN';
   boothId: string | null;
 };
 

@@ -387,8 +387,8 @@ adminRouter.get('/activities', async (req, res) => {
       notes: row.notes,
       actorName: row.actor.fullName,
       actorNumber: row.actor.membershipNumber,
-      boothName: row.booth.name,
-      boothCode: row.booth.code,
+      boothName: row.booth?.name ?? null,
+      boothCode: row.booth?.code ?? null,
     })),
   });
 });
@@ -407,7 +407,7 @@ adminRouter.get('/meetings', async (_req, res) => {
       startsAt: row.startsAt,
       venue: row.venue,
       hostName: row.host.fullName,
-      boothName: row.booth.name,
+      boothName: row.booth?.name ?? null,
       invitees: row.invitees.length,
       checkIns: row.checkIns.length,
     })),
@@ -466,7 +466,7 @@ adminRouter.get('/verification', async (req, res) => {
       notes: row.notes,
       actorName: row.actor.fullName,
       actorNumber: row.actor.membershipNumber,
-      boothName: row.booth.name,
+      boothName: row.booth?.name ?? null,
       reviewFlag: row.reviewFlag,
     })),
   });

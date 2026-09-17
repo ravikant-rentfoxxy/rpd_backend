@@ -91,7 +91,7 @@ async function findMeeting(idOrCode: string) {
 }
 
 meetingsRouter.get('/', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const meetings = await prisma.meeting.findMany({
     where: { OR: [{ hostId: auth.member.id }, { boothId: auth.member.boothId ?? undefined }] },
     include: { invitees: true, checkIns: true, booth: true, host: true },
@@ -108,7 +108,7 @@ meetingsRouter.get('/:id', async (req, res) => {
 });
 
 meetingsRouter.post('/', validate(createSchema), async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const body = req.body as z.infer<typeof createSchema>;
   const boothId = body.boothId ?? auth.member.boothId ?? null;
   if (boothId) {
@@ -145,7 +145,7 @@ meetingsRouter.post('/:id/start', async (req, res) => {
 });
 
 meetingsRouter.post('/:id/check-in', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const parsed = checkInSchema.safeParse(req.body);
   if (!parsed.success) throw badRequest('Share your location to join this meeting');
   const meeting = await findMeeting(req.params.id);

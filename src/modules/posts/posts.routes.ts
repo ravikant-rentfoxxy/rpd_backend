@@ -115,7 +115,7 @@ postsRouter.get('/issues', async (_req, res) => {
 });
 
 postsRouter.get('/', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const member = auth.member;
   const filters: Prisma.RegionPostWhereInput[] = [{ authorId: member.id }, { assignedToId: member.id }];
   if (member.districtId) filters.push({ districtId: member.districtId });
@@ -130,7 +130,7 @@ postsRouter.get('/', async (req, res) => {
 });
 
 postsRouter.get('/grievances', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const member = auth.member;
   const viewerRank = viewerRankOf(member, auth.auth.post);
   if (viewerRank <= 10 && !member.isSuperAdmin) {
@@ -159,7 +159,7 @@ postsRouter.get('/grievances', async (req, res) => {
 });
 
 postsRouter.get('/:id/assignees', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const post = await findRegionPost(req.params.id);
   if (!post) throw notFound('Post not found');
   const viewerRank = viewerRankOf(auth.member, auth.auth.post);
@@ -196,14 +196,14 @@ postsRouter.get('/:id/assignees', async (req, res) => {
 });
 
 postsRouter.get('/:id', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const post = await findRegionPost(req.params.id);
   if (!post) throw notFound('Post not found');
   return ok(res, { post: serializePost(asPost(post), auth.member, auth.auth.post) });
 });
 
 postsRouter.post('/:id/summary', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const post = await findRegionPost(req.params.id);
   if (!post) throw notFound('Post not found');
   const viewerRank = viewerRankOf(auth.member, auth.auth.post);
@@ -243,7 +243,7 @@ postsRouter.post('/:id/summary', async (req, res) => {
 });
 
 postsRouter.post('/:id/assign', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const parsed = z.object({ memberId: uuid.nullable().optional() }).safeParse(req.body);
   if (!parsed.success) throw badRequest('Select a member');
   const post = await findRegionPost(req.params.id);
@@ -296,7 +296,7 @@ postsRouter.post('/:id/assign', async (req, res) => {
 });
 
 postsRouter.post('/:id/resolve', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const parsed = z.object({ status: z.enum(['OPEN', 'RESOLVED']) }).safeParse(req.body);
   if (!parsed.success) throw badRequest('Select a status');
   const post = await findRegionPost(req.params.id);
@@ -317,7 +317,7 @@ postsRouter.post('/:id/resolve', async (req, res) => {
 });
 
 postsRouter.post('/', postMediaFields, async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const files = req.files as Record<string, Express.Multer.File[]> | undefined;
   const file = files?.file?.[0];
   const thumbnail = files?.thumbnail?.[0];

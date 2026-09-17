@@ -97,7 +97,7 @@ export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
 
 tasksRouter.get('/', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfToday = new Date(startOfToday.getTime() + 86400000);
@@ -139,7 +139,7 @@ tasksRouter.get('/', async (req, res) => {
 });
 
 tasksRouter.post('/:id/start', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   const viewerRank = actorEventRank(auth.member, auth.auth.post);
   const task = await prisma.orgTask.findFirst({
     where: { id: req.params.id, deletedAt: null },
@@ -162,7 +162,7 @@ tasksRouter.post('/:id/start', async (req, res) => {
 });
 
 tasksRouter.post('/', async (req, res) => {
-  const auth = req as AuthedRequest;
+  const auth = req as unknown as AuthedRequest;
   if (!canCreateOrgEvent(auth.member, auth.auth.post)) {
     throw forbidden('Only office bearers can create a task');
   }
