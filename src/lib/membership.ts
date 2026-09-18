@@ -1,3 +1,5 @@
+import { logError } from './logger.js';
+import { creditMemberAdded } from './points.js';
 import { prisma } from './prisma.js';
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -26,6 +28,54 @@ export async function persistMembershipNumber(memberId: string, rowId: number, s
     data: { publicCode: number },
   });
   return number;
+}
+
+/**
+ * Finds the member a referral points to: a 10-digit mobile, or the invite code shown on their card.
+ * Invite codes are derived (not stored), so codes are matched by recomputing them for active members.
+ */
+export async function findReferrer(input: string) {
+  const value = input.trim().toUpperCase().replace(/\s+/g, '');
+  if (!value) return null;
+  const digits = value.replace(/\D/g, '');
+  if (/^\d{10,12}$/.test(value.replace(/^\+/, '')) && /^[6-9]\d{9}$/.test(digits.slice(-10))) {
+    return prisma.member.findFirst({
+      where: { mobileE164: `+91${digits.slice(-10)}`, deletedAt: null, status: { not: 'DRAFT' } },
+      select: { id: true },
+    });
+  }
+  if (!/^[A-Z0-9]{8}$/.test(value)) return null;
+  const members = await prisma.member.findMany({
+    where: { deletedAt: null, status: { not: 'DRAFT' } },
+    select: { id: true, membershipNumber: true },
+  });
+  const match = members.find((m) => inviteCodeFrom(m.membershipNumber ?? m.id) === value);
+  return match ? { id: match.id } : null;
+}
+
+/**
+ * Credits the owner of a referral code when a member who hasn't joined yet enters it: they become the
+ * recruiter (counts toward their tasks done / members added) and get the MEMBER_ADDED points.
+ * The member entering the code gets nothing. Only the first referral counts, and a failure never blocks the caller.
+ */
+export async function applySignupReferral(
+  member: { id: string; status: string; referralCode: string | null; recruitedById: string | null },
+  input: string,
+) {
+  if (member.status !== 'DRAFT' || member.referralCode || member.recruitedById) return false;
+  try {
+    const referrer = await findReferrer(input);
+    if (!referrer || referrer.id === member.id) return false;
+    await prisma.member.update({
+      where: { id: member.id },
+      data: { referralCode: input.trim().toUpperCase(), recruitedById: referrer.id },
+    });
+    await creditMemberAdded(referrer.id, member.id);
+    return true;
+  } catch (error) {
+    logError('signup referral failed', { error: error instanceof Error ? error.message : String(error), memberId: member.id });
+    return false;
+  }
 }
 
 /** Stable 8-character referral code (letters + digits), e.g. K7M2XQ9P */

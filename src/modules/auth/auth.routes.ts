@@ -9,7 +9,7 @@ import { badRequest, tooMany, unauthorized } from '../../lib/errors.js';
 import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { serializeMember } from '../members/member.serialize.js';
-import { membershipNumberFromRowId } from '../../lib/membership.js';
+import { applySignupReferral, membershipNumberFromRowId } from '../../lib/membership.js';
 import { primaryPost } from '../admin/admin.posts.js';
 import { touchLastActive } from '../home/last-active.js';
 import { fcmTokenClear, fcmTokenWrite } from '../../lib/push.js';
@@ -26,6 +26,7 @@ const verifySchema = z.object({
   mobile: z.string().trim().regex(/^[6-9]\d{9}$/),
   code: z.string().trim().regex(/^\d{6}$/),
   fcmToken: z.string().trim().min(20).max(512).optional(),
+  referralCode: z.string().trim().max(32).optional(),
 });
 
 const refreshSchema = z.object({
@@ -122,7 +123,7 @@ authRouter.post('/otp/request', validate(mobileSchema), async (req, res) => {
 });
 
 authRouter.post('/otp/verify', validate(verifySchema), async (req, res) => {
-  const { mobile, code, fcmToken } = req.body as z.infer<typeof verifySchema>;
+  const { mobile, code, fcmToken, referralCode } = req.body as z.infer<typeof verifySchema>;
   const mobileE164 = toE164(mobile);
 
   const challenge = await prisma.otpChallenge.findFirst({
@@ -177,6 +178,8 @@ authRouter.post('/otp/verify', validate(verifySchema), async (req, res) => {
     });
   }
 
+  const referralApplied = referralCode ? await applySignupReferral(member, referralCode) : false;
+
   member = await prisma.member.update({
     where: { id: member.id },
     data: {
@@ -198,6 +201,7 @@ authRouter.post('/otp/verify', validate(verifySchema), async (req, res) => {
     ...verification,
     isNewMember: !member.isSuperAdmin && (member.status === 'DRAFT' || !member.fullName),
     member: serialized,
+    referralApplied,
   });
 });
 

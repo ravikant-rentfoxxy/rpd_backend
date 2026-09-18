@@ -319,7 +319,7 @@ postsRouter.post('/:id/resolve', async (req, res) => {
   const post = await findRegionPost(req.params.id);
   if (!post) throw notFound('Post not found');
   const viewerRank = viewerRankOf(auth.member, auth.auth.post);
-  if (!canResolvePostIssue(auth.member, viewerRank, post.author)) {
+  if (!canResolvePostIssue(auth.member, viewerRank, post.author, post.assignedToId)) {
     throw forbidden('Only a higher authority can resolve this issue');
   }
   const resolved = parsed.data.status === 'RESOLVED';

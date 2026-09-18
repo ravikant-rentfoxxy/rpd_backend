@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { created, ok } from '../../lib/http.js';
 import { prisma } from '../../lib/prisma.js';
 import { hashMobile } from '../../lib/crypto.js';
-import { membershipNumberFromRowId, persistMembershipNumber, stateCodeForId } from '../../lib/membership.js';
+import { applySignupReferral, membershipNumberFromRowId, persistMembershipNumber, stateCodeForId } from '../../lib/membership.js';
+import { creditMemberAdded } from '../../lib/points.js';
 import { parseIsoDate } from '../../lib/date.js';
 import { mediaPublicUrl, putMemberPhoto } from '../../lib/storage.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
@@ -12,6 +13,7 @@ import { requireAuth, type AuthedRequest } from '../../middleware/auth.js';
 import { photoUpload } from '../../middleware/upload.js';
 import { validate } from '../../middleware/validate.js';
 import { serializeMember } from './member.serialize.js';
+import { leadersPayload } from './leaders.js';
 import { assertPincodeMatchesState } from '../geo/pincode.js';
 
 const isoDate = z
@@ -58,34 +60,6 @@ const recruitGraph = {
   posts: { where: { endedAt: null } },
   recruitedBy: { select: { id: true, fullName: true, membershipNumber: true, rowId: true } },
 } as const;
-
-async function creditMemberAdded(recruiterId: string, recruitId: string) {
-  const note = `Member added · ${recruitId}`;
-  const existing = await prisma.pointLedgerEntry.findFirst({
-    where: { memberId: recruiterId, source: 'MEMBER_ADDED', note },
-  });
-  if (existing) return 0;
-  const rule = await prisma.pointRule.upsert({
-    where: { source: 'MEMBER_ADDED' },
-    update: {},
-    create: { source: 'MEMBER_ADDED', points: 1, unitLabel: 'member', active: true },
-  });
-  const points = rule.active ? rule.points : 1;
-  if (points <= 0) return 0;
-  const now = new Date();
-  await prisma.pointLedgerEntry.create({
-    data: {
-      memberId: recruiterId,
-      source: 'MEMBER_ADDED',
-      direction: 'CREDIT',
-      points,
-      pending: false,
-      note,
-      periodMonth: new Date(now.getFullYear(), now.getMonth(), 1),
-    },
-  });
-  return points;
-}
 
 async function recruitsPayload(recruiterId: string) {
   const recruits = await prisma.member.findMany({
@@ -142,6 +116,7 @@ const updateProfileSchema = z.object({
   whatsappOptIn: z.boolean().optional(),
   acceptedRequiredConsent: z.boolean().optional(),
   fcmToken: z.string().trim().min(20).max(512).optional(),
+  referralCode: z.string().trim().max(32).optional(),
 });
 
 membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
@@ -242,6 +217,8 @@ membersRouter.patch('/me', validate(updateProfileSchema), async (req, res) => {
       await assertPincodeMatchesState(pin, nextStateId);
     }
   }
+
+  if (body.referralCode) await applySignupReferral(auth.member, body.referralCode);
 
   const member = await prisma.member.update({
     where: { id: auth.member.id },
@@ -629,6 +606,12 @@ membersRouter.post('/contribution', validate(contributionSchema), async (req, re
     include: { booth: { include: { mandal: true, assembly: true, district: { include: { state: true } } } }, state: true, district: true, assembly: true, posts: true, card: true },
   });
   return ok(res, { member: serializeMember(member) });
+});
+
+/** Office bearers leading the signed-in member's area, national down to booth. */
+membersRouter.get('/leaders', async (req, res) => {
+  const auth = req as AuthedRequest;
+  return ok(res, await leadersPayload(auth.member));
 });
 
 membersRouter.get('/recruits', async (req, res) => {

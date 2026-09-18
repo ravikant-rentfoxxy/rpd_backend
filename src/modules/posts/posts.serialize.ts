@@ -26,7 +26,7 @@ export const assigneeSelect = {
 export const postInclude = {
   author: { select: authorSelect },
   assignedTo: { select: assigneeSelect },
-  assignedBy: { select: { id: true, fullName: true } },
+  assignedBy: { select: assigneeSelect },
   resolvedBy: { select: { id: true, fullName: true } },
   issue: true,
   subIssue: true,
@@ -45,7 +45,7 @@ export type RegionPostRow = RegionPost & {
   issue: PostIssue;
   subIssue?: PostIssue | null;
   assignedTo?: AssigneeRow | null;
-  assignedBy?: Pick<Member, 'id' | 'fullName'> | null;
+  assignedBy?: AssigneeRow | null;
   resolvedBy?: Pick<Member, 'id' | 'fullName'> | null;
 };
 
@@ -69,8 +69,15 @@ export function isMemberAuthor(author: AuthorRow) {
   return actorRank(author, author.posts) <= rankOf('MEMBER');
 }
 
-export function canResolvePostIssue(viewer: Pick<Member, 'id' | 'isSuperAdmin'>, viewerRank: number, author: AuthorRow) {
+export function canResolvePostIssue(
+  viewer: Pick<Member, 'id' | 'isSuperAdmin'>,
+  viewerRank: number,
+  author: AuthorRow,
+  assignedToId?: string | null,
+) {
   if (viewer.id === author.id) return false;
+  // Whoever the grievance was handed to can close it once it's dealt with.
+  if (assignedToId && assignedToId === viewer.id) return true;
   if (!isMemberAuthor(author)) return false;
   return viewerRank > actorRank(author, author.posts);
 }
@@ -78,14 +85,22 @@ export function canResolvePostIssue(viewer: Pick<Member, 'id' | 'isSuperAdmin'>,
 export function canSummariseGrievancePost(
   viewer: Pick<Member, 'id' | 'isSuperAdmin'>,
   viewerRank: number,
-  post: Pick<RegionPost, 'status'> & { author: AuthorRow },
+  post: Pick<RegionPost, 'status' | 'assignedToId'> & { author: AuthorRow },
 ) {
   if (post.status !== 'OPEN') return false;
+  // Whoever has to follow the grievance up can always write the post for X.
+  if (post.assignedToId === viewer.id) return true;
   if (!isMemberAuthor(post.author)) return false;
   return canAssignPostIssue(viewer, viewerRank, post.author);
 }
 
-export function canSeeResolveSection(viewer: Pick<Member, 'id' | 'isSuperAdmin'>, viewerRank: number, author: AuthorRow) {
+export function canSeeResolveSection(
+  viewer: Pick<Member, 'id' | 'isSuperAdmin'>,
+  viewerRank: number,
+  author: AuthorRow,
+  assignedToId?: string | null,
+) {
+  if (assignedToId && assignedToId === viewer.id) return true;
   if (!isMemberAuthor(author)) return false;
   return viewer.id === author.id || canResolvePostIssue(viewer, viewerRank, author);
 }
@@ -121,10 +136,11 @@ export function serializePost(
   const subIssue = post.subIssue ? serializeIssue(post.subIssue) : null;
   const viewerRank = viewerRankOf(viewer, viewerPost);
   const seeAuthor = canSeePostAuthor(viewer, viewerRank, post.author);
-  const isAuthor = viewer.id === post.author.id;
   const isAssignee = post.assignedToId === viewer.id;
-  const seeAssignee = Boolean(post.assignedTo) && (isAuthor || isAssignee || seeAuthor);
+  // Who is following a grievance up is not private — anyone who can see the post sees it.
+  const seeAssignee = Boolean(post.assignedTo);
   const assigneePost = post.assigneePost || (post.assignedTo ? primaryPost(post.assignedTo, post.assignedTo.posts) : null);
+  const assignerPost = seeAssignee && post.assignedBy ? primaryPost(post.assignedBy, post.assignedBy.posts) : null;
   return {
     id: post.clientUuid,
     serverId: post.id,
@@ -148,9 +164,9 @@ export function serializePost(
     authorPost: seeAuthor ? primaryPost(post.author, post.author.posts) : null,
     canSeeAuthor: seeAuthor,
     canAssign: canAssignPostIssue(viewer, viewerRank, post.author),
-    canResolve: canResolvePostIssue(viewer, viewerRank, post.author),
+    canResolve: canResolvePostIssue(viewer, viewerRank, post.author, post.assignedToId),
     canSummarise: canSummariseGrievancePost(viewer, viewerRank, post),
-    showResolve: canSeeResolveSection(viewer, viewerRank, post.author),
+    showResolve: canSeeResolveSection(viewer, viewerRank, post.author, post.assignedToId),
     status: post.status,
     resolvedAt: post.resolvedAt ? post.resolvedAt.toISOString() : null,
     resolvedById: post.resolvedById,
@@ -159,6 +175,11 @@ export function serializePost(
     assigneeName: seeAssignee ? post.assignedTo?.fullName ?? null : null,
     assigneePost: seeAssignee ? assigneePost : null,
     assigneePostLabel: seeAssignee ? labelOf(assigneePost) : null,
+    isAssignedToMe: Boolean(post.assignedTo) && isAssignee,
+    assignedById: seeAssignee ? post.assignedById : null,
+    assignedByName: seeAssignee ? post.assignedBy?.fullName ?? null : null,
+    assignedByPost: assignerPost,
+    assignedByPostLabel: assignerPost ? labelOf(assignerPost) : null,
     assignedAt: seeAssignee && post.assignedAt ? post.assignedAt.toISOString() : null,
     districtId: post.districtId,
     assemblyId: post.assemblyId,

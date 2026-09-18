@@ -329,6 +329,8 @@ adminRouter.delete('/members/:id/posts/:postId', async (req, res) => {
 const regionPostQuery = z.object({
   status: z.enum(['OPEN', 'RESOLVED']).optional(),
   assigned: z.enum(['yes', 'no']).optional(),
+  /** Grievances handed to the signed-in officer, wherever they were raised. */
+  mine: z.coerce.boolean().optional(),
   q: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
@@ -337,7 +339,10 @@ const regionPostQuery = z.object({
 adminRouter.get('/region-posts', async (req, res) => {
   const auth = asAdmin(req);
   const query = regionPostQuery.parse(req.query);
-  const and: Prisma.RegionPostWhereInput[] = [areaRegionPostWhere(auth.area)];
+  // Work assigned to you stays visible even if it sits outside the area you manage.
+  const and: Prisma.RegionPostWhereInput[] = [
+    query.mine ? { assignedToId: auth.member.id } : areaRegionPostWhere(auth.area),
+  ];
   if (query.status) and.push({ status: query.status });
   if (query.assigned === 'yes') and.push({ assignedToId: { not: null } });
   if (query.assigned === 'no') and.push({ assignedToId: null });
@@ -351,9 +356,10 @@ adminRouter.get('/region-posts', async (req, res) => {
     });
   }
   const where: Prisma.RegionPostWhereInput = { deletedAt: null, AND: and };
-  const [total, open, rows] = await Promise.all([
+  const [total, open, mineOpen, rows] = await Promise.all([
     prisma.regionPost.count({ where }),
     prisma.regionPost.count({ where: { deletedAt: null, status: 'OPEN', AND: [areaRegionPostWhere(auth.area)] } }),
+    prisma.regionPost.count({ where: { deletedAt: null, status: 'OPEN', assignedToId: auth.member.id } }),
     prisma.regionPost.findMany({
       where,
       include: postInclude,
@@ -366,9 +372,13 @@ adminRouter.get('/region-posts', async (req, res) => {
   return ok(res, {
     total,
     open,
+    mineOpen,
     page: query.page,
     limit: query.limit,
-    posts: rows.map((row) => serializePost(row, auth.member, viewerPost)),
+    posts: rows.map((row) => ({
+      ...serializePost(row, auth.member, viewerPost),
+      assignedByName: row.assignedBy?.fullName ?? null,
+    })),
   });
 });
 
@@ -389,7 +399,12 @@ adminRouter.get('/region-posts/:id', async (req, res) => {
   const auth = asAdmin(req);
   const id = String(req.params.id);
   const post = await prisma.regionPost.findFirst({
-    where: { deletedAt: null, OR: [{ id }, { clientUuid: id }], AND: [areaRegionPostWhere(auth.area)] },
+    where: {
+      deletedAt: null,
+      OR: [{ id }, { clientUuid: id }],
+      // In your area, or handed to you.
+      AND: [{ OR: [areaRegionPostWhere(auth.area), { assignedToId: auth.member.id }] }],
+    },
     include: postInclude,
   });
   if (!post) throw notFound('Grievance not found in your area');

@@ -45,7 +45,7 @@ export const adminWorkRouter = Router();
 /** Small badge counts for the portal navigation; cheap enough to poll. */
 adminWorkRouter.get('/counts', async (req, res) => {
   const auth = asAdmin(req);
-  const [awaitingReview, openGrievances] = await Promise.all([
+  const [awaitingReview, openGrievances, assignedToMe] = await Promise.all([
     prisma.activity.count({
       where: {
         deletedAt: null,
@@ -55,10 +55,12 @@ adminWorkRouter.get('/counts', async (req, res) => {
       },
     }),
     prisma.regionPost.count({
-      where: { deletedAt: null, status: 'OPEN', assignedToId: null, AND: [areaRegionPostWhere(auth.area)] },
+      // Same query as the Open tab on the Grievances page, so the badge and the list agree.
+      where: { deletedAt: null, status: 'OPEN', AND: [areaRegionPostWhere(auth.area)] },
     }),
+    prisma.regionPost.count({ where: { deletedAt: null, status: 'OPEN', assignedToId: auth.member.id } }),
   ]);
-  return ok(res, { awaitingReview, openGrievances });
+  return ok(res, { awaitingReview, openGrievances, assignedToMe });
 });
 
 adminWorkRouter.get('/overview', async (req, res) => {
