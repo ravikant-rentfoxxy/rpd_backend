@@ -4,11 +4,13 @@ import { prisma } from '../../lib/prisma.js';
 import { forbidden, unauthorized } from '../../lib/errors.js';
 import { verifyAccessToken } from '../../lib/jwt.js';
 import { actorRank, POST_RANK } from './admin.posts.js';
+import { adminAreaOf, type AdminArea } from './admin.scope.js';
 
 export type AdminRequest = Request & {
   member: Member;
   posts: MemberPost[];
   rank: number;
+  area: AdminArea;
 };
 
 export async function requireAdmin(req: Request, _res: Response, next: NextFunction) {
@@ -34,6 +36,7 @@ export async function requireAdmin(req: Request, _res: Response, next: NextFunct
     admin.member = member;
     admin.posts = posts;
     admin.rank = rank;
+    admin.area = adminAreaOf(member, rank);
     next();
   } catch (error) {
     next(error instanceof Error && 'status' in error ? error : unauthorized());

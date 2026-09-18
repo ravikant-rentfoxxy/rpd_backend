@@ -112,7 +112,7 @@ activityEventsRouter.post(
   validate(z.object({ optionId: z.string().uuid() })),
   async (req, res) => {
     const auth = req as unknown as AuthedRequest;
-    const event = await loadLiveEvent(req.params.id);
+    const event = await loadLiveEvent(String(req.params.id ?? ''));
     if (!event) throw notFound('Activity event not found');
     const optionId = (req.body as { optionId: string }).optionId;
     if (!event.options.some((option) => option.id === optionId)) {

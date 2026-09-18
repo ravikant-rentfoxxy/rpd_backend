@@ -6,17 +6,24 @@ import { prisma } from '../../lib/prisma.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { adminAuthRouter } from './admin.auth.routes.js';
 import { adminEngagementRouter } from './admin.engagement.routes.js';
+import { adminWorkRouter } from './admin.work.routes.js';
+import {
+  areaActivityWhere,
+  areaBoothWhere,
+  areaMemberWhere,
+  areaName,
+  areaRegionPostWhere,
+  inArea,
+} from './admin.scope.js';
+import { postInclude, serializePost } from '../posts/posts.serialize.js';
 import { requireAdmin, type AdminRequest } from './admin.auth.js';
-import { adminMediaUrl, serializeAdminMember, serializeAdminOffice } from './admin.serialize.js';
+import { serializeAdminMember, serializeAdminOffice } from './admin.serialize.js';
 import {
   ALL_POSTS,
   assignablePosts,
   canAssignPost,
   canManageMember,
-  inMemberScope,
   labelOf,
-  memberScopeWhere,
-  POST_RANK,
   primaryPost,
   rankOf,
   scopeForPost,
@@ -69,6 +76,7 @@ export const adminRouter = Router();
 adminRouter.use('/auth', adminAuthRouter);
 adminRouter.use(requireAdmin);
 adminRouter.use('/engagement-events', adminEngagementRouter);
+adminRouter.use(adminWorkRouter);
 
 adminRouter.get('/me', async (req, res) => {
   const auth = asAdmin(req);
@@ -81,23 +89,8 @@ adminRouter.get('/me', async (req, res) => {
     rank: auth.rank,
     post: primaryPost(auth.member, auth.posts),
     assignablePosts: assignablePosts(auth.rank),
+    area: { level: auth.area.level, name: await areaName(auth.area) },
   });
-});
-
-adminRouter.get('/overview', async (req, res) => {
-  const auth = asAdmin(req);
-  const scope = memberScopeWhere(auth.member, auth.rank);
-  const memberWhere = { deletedAt: null, ...scope };
-  const [members, verified, pending, posts, activities, meetings, booths] = await Promise.all([
-    prisma.member.count({ where: memberWhere }),
-    prisma.member.count({ where: { ...memberWhere, status: 'VERIFIED' } }),
-    prisma.member.count({ where: { ...memberWhere, status: { in: ['DRAFT', 'PENDING'] } } }),
-    prisma.regionPost.count({ where: { deletedAt: null } }),
-    prisma.activity.count({ where: { deletedAt: null } }),
-    prisma.meeting.count(),
-    prisma.booth.count({ where: { deletedAt: null } }),
-  ]);
-  return ok(res, { members, verified, pending, posts, activities, meetings, booths });
 });
 
 adminRouter.get('/members', async (req, res) => {
@@ -106,8 +99,7 @@ adminRouter.get('/members', async (req, res) => {
   const page = Number(query.page);
   const take = Number(query.limit);
   const skip = (page - 1) * take;
-  const scope = memberScopeWhere(auth.member, auth.rank);
-  const where: Prisma.MemberWhereInput = { deletedAt: null, ...scope };
+  const where: Prisma.MemberWhereInput = { deletedAt: null, AND: [areaMemberWhere(auth.area)] };
   if (query.status) where.status = query.status;
   if (query.stateId) where.stateId = query.stateId;
   if (query.districtId) where.districtId = query.districtId;
@@ -161,9 +153,8 @@ adminRouter.get('/members', async (req, res) => {
 
 adminRouter.get('/assign/candidates', async (req, res) => {
   const auth = asAdmin(req);
-  const scope = memberScopeWhere(auth.member, auth.rank);
   const rows = await prisma.member.findMany({
-    where: { deletedAt: null, id: { not: auth.member.id }, ...scope },
+    where: { deletedAt: null, id: { not: auth.member.id }, AND: [areaMemberWhere(auth.area)] },
     include: adminGraph,
     orderBy: { fullName: 'asc' },
     take: 300,
@@ -199,7 +190,7 @@ adminRouter.get('/members/:id', async (req, res) => {
     },
   });
   if (!member) throw notFound('Member not found');
-  if (!inMemberScope(auth.member, auth.rank, member)) throw forbidden('This member is outside your area');
+  if (!inArea(auth.area, member)) throw forbidden('This member is outside your area');
   const rank = actorRank(member, member.posts);
   return ok(res, {
     member: serializeAdminMember(member),
@@ -218,7 +209,7 @@ adminRouter.patch('/members/:id', async (req, res) => {
     include: { posts: { where: { endedAt: null } } },
   });
   if (!member) throw notFound('Member not found');
-  if (!inMemberScope(auth.member, auth.rank, member)) throw forbidden('This member is outside your area');
+  if (!inArea(auth.area, member)) throw forbidden('This member is outside your area');
   if (member.isSuperAdmin && !auth.member.isSuperAdmin) throw forbidden('You cannot change a super admin');
   const rank = actorRank(member, member.posts);
   if (auth.rank <= rank) throw forbidden('You can only update members below your post');
@@ -238,7 +229,7 @@ adminRouter.post('/members/:id/posts', async (req, res) => {
     include: { posts: { where: { endedAt: null } } },
   });
   if (!member) throw notFound('Member not found');
-  if (!inMemberScope(auth.member, auth.rank, member)) throw forbidden('This member is outside your area');
+  if (!inArea(auth.area, member)) throw forbidden('This member is outside your area');
   if (member.id === auth.member.id && !auth.member.isSuperAdmin) {
     throw forbidden('You cannot assign a post to yourself');
   }
@@ -301,7 +292,7 @@ adminRouter.delete('/members/:id/posts/:postId', async (req, res) => {
     include: { posts: { where: { endedAt: null } } },
   });
   if (!member) throw notFound('Member not found');
-  if (!inMemberScope(auth.member, auth.rank, member)) throw forbidden('This member is outside your area');
+  if (!inArea(auth.area, member)) throw forbidden('This member is outside your area');
   const row = member.posts.find((item) => item.id === String(req.params.postId));
   if (!row) throw notFound('Post not found');
   const rank = actorRank(member, member.posts);
@@ -335,66 +326,137 @@ adminRouter.delete('/members/:id/posts/:postId', async (req, res) => {
   });
 });
 
-adminRouter.get('/region-posts', async (_req, res) => {
-  const rows = await prisma.regionPost.findMany({
-    where: { deletedAt: null },
-    include: { author: { select: { fullName: true, mobileE164: true } }, issue: true, subIssue: true },
-    orderBy: { createdAt: 'desc' },
-    take: 80,
-  });
+const regionPostQuery = z.object({
+  status: z.enum(['OPEN', 'RESOLVED']).optional(),
+  assigned: z.enum(['yes', 'no']).optional(),
+  q: z.string().trim().max(100).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+adminRouter.get('/region-posts', async (req, res) => {
+  const auth = asAdmin(req);
+  const query = regionPostQuery.parse(req.query);
+  const and: Prisma.RegionPostWhereInput[] = [areaRegionPostWhere(auth.area)];
+  if (query.status) and.push({ status: query.status });
+  if (query.assigned === 'yes') and.push({ assignedToId: { not: null } });
+  if (query.assigned === 'no') and.push({ assignedToId: null });
+  if (query.q) {
+    and.push({
+      OR: [
+        { description: { contains: query.q, mode: 'insensitive' } },
+        { regionLabel: { contains: query.q, mode: 'insensitive' } },
+        { issue: { name: { contains: query.q, mode: 'insensitive' } } },
+      ],
+    });
+  }
+  const where: Prisma.RegionPostWhereInput = { deletedAt: null, AND: and };
+  const [total, open, rows] = await Promise.all([
+    prisma.regionPost.count({ where }),
+    prisma.regionPost.count({ where: { deletedAt: null, status: 'OPEN', AND: [areaRegionPostWhere(auth.area)] } }),
+    prisma.regionPost.findMany({
+      where,
+      include: postInclude,
+      orderBy: { createdAt: 'desc' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+  ]);
+  const viewerPost = primaryPost(auth.member, auth.posts);
   return ok(res, {
-    posts: rows.map((row) => ({
-      id: row.id,
-      description: row.description,
-      mediaType: row.mediaType,
-      mediaUrl: adminMediaUrl(row.mediaKey),
-      thumbnailUrl: row.thumbnailKey ? adminMediaUrl(row.thumbnailKey) : null,
-      regionLabel: row.regionLabel,
-      createdAt: row.createdAt,
-      authorName: row.author.fullName,
-      authorMobile: row.author.mobileE164,
-      issueName: row.issue.name,
-      subIssueName: row.subIssue?.name ?? null,
-      issuePriority: row.issue.priority,
-    })),
+    total,
+    open,
+    page: query.page,
+    limit: query.limit,
+    posts: rows.map((row) => serializePost(row, auth.member, viewerPost)),
+  });
+});
+
+const ACTIVITY_TYPES = ['MEETING', 'ADD_MEMBER', 'GRIHA_SAMPARK', 'PUBLIC_PROGRAMME', 'TRAINING', 'OTHER'] as const;
+const ACTIVITY_STATUSES = ['QUEUED', 'UPLOADED', 'PENDING_VERIFICATION', 'VERIFIED', 'NOT_VERIFIED', 'APPEALED'] as const;
+
+const activityQuery = z.object({
+  type: z.enum(ACTIVITY_TYPES).optional(),
+  status: z.enum([...ACTIVITY_STATUSES, 'AWAITING']).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  q: z.string().trim().max(100).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+adminRouter.get('/region-posts/:id', async (req, res) => {
+  const auth = asAdmin(req);
+  const id = String(req.params.id);
+  const post = await prisma.regionPost.findFirst({
+    where: { deletedAt: null, OR: [{ id }, { clientUuid: id }], AND: [areaRegionPostWhere(auth.area)] },
+    include: postInclude,
+  });
+  if (!post) throw notFound('Grievance not found in your area');
+  return ok(res, {
+    post: {
+      ...serializePost(post, auth.member, primaryPost(auth.member, auth.posts)),
+      assignedByName: post.assignedBy?.fullName ?? null,
+    },
   });
 });
 
 adminRouter.get('/activities', async (req, res) => {
   const auth = asAdmin(req);
-  const boothWhere: Prisma.BoothWhereInput = {};
-  if (auth.member.mandalId) boothWhere.mandalId = auth.member.mandalId;
-  else if (auth.member.assemblyId) boothWhere.assemblyId = auth.member.assemblyId;
-  else if (auth.member.districtId) boothWhere.districtId = auth.member.districtId;
-  else if (auth.member.boothId) boothWhere.id = auth.member.boothId;
-  const rows = await prisma.activity.findMany({
-    where: {
-      deletedAt: null,
-      ...(Object.keys(boothWhere).length && auth.rank < POST_RANK.NATIONAL_GENERAL_SECRETARY
-        ? { booth: boothWhere }
-        : {}),
-    },
-    include: { actor: { select: { fullName: true, membershipNumber: true } }, booth: true },
-    orderBy: { occurredAt: 'desc' },
-    take: 80,
-  });
+  const query = activityQuery.parse(req.query);
+  const and: Prisma.ActivityWhereInput[] = [areaActivityWhere(auth.area)];
+  if (query.type) and.push({ type: query.type });
+  if (query.status === 'AWAITING') and.push({ status: { in: ['QUEUED', 'UPLOADED', 'PENDING_VERIFICATION'] } });
+  else if (query.status) and.push({ status: query.status });
+  if (query.from || query.to) and.push({ occurredAt: { gte: query.from, lte: query.to } });
+  if (query.q) {
+    and.push({
+      OR: [
+        { notes: { contains: query.q, mode: 'insensitive' } },
+        { actor: { fullName: { contains: query.q, mode: 'insensitive' } } },
+        { actor: { membershipNumber: { contains: query.q, mode: 'insensitive' } } },
+      ],
+    });
+  }
+  const where: Prisma.ActivityWhereInput = { deletedAt: null, AND: and };
+  const [total, rows] = await Promise.all([
+    prisma.activity.count({ where }),
+    prisma.activity.findMany({
+      where,
+      include: { actor: { select: { id: true, fullName: true, membershipNumber: true } }, booth: true },
+      orderBy: { occurredAt: 'desc' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+  ]);
   return ok(res, {
+    total,
+    page: query.page,
+    limit: query.limit,
     activities: rows.map((row) => ({
       id: row.id,
       type: row.type,
       status: row.status,
       occurredAt: row.occurredAt,
       notes: row.notes,
+      actorId: row.actor.id,
       actorName: row.actor.fullName,
       actorNumber: row.actor.membershipNumber,
-      boothName: row.booth.name,
-      boothCode: row.booth.code,
+      boothName: row.booth?.name ?? null,
+      boothCode: row.booth?.code ?? null,
+      attendeeCount: row.attendeeCount,
+      homesCovered: row.homesCovered,
+      photoCount: row.photoCount,
+      reviewFlag: row.reviewFlag,
+      distanceMetres: row.distanceMetres,
     })),
   });
 });
 
-adminRouter.get('/meetings', async (_req, res) => {
+adminRouter.get('/meetings', async (req, res) => {
+  const auth = asAdmin(req);
   const rows = await prisma.meeting.findMany({
+    where: { host: areaMemberWhere(auth.area) },
     include: { host: { select: { fullName: true } }, booth: true, invitees: true, checkIns: true },
     orderBy: { startsAt: 'desc' },
     take: 80,
@@ -407,7 +469,7 @@ adminRouter.get('/meetings', async (_req, res) => {
       startsAt: row.startsAt,
       venue: row.venue,
       hostName: row.host.fullName,
-      boothName: row.booth.name,
+      boothName: row.booth?.name ?? null,
       invitees: row.invitees.length,
       checkIns: row.checkIns.length,
     })),
@@ -416,11 +478,7 @@ adminRouter.get('/meetings', async (_req, res) => {
 
 adminRouter.get('/booths', async (req, res) => {
   const auth = asAdmin(req);
-  const boothWhere: Prisma.BoothWhereInput = { deletedAt: null };
-  if (auth.member.mandalId) boothWhere.mandalId = auth.member.mandalId;
-  else if (auth.member.assemblyId) boothWhere.assemblyId = auth.member.assemblyId;
-  else if (auth.member.districtId) boothWhere.districtId = auth.member.districtId;
-  else if (auth.member.boothId) boothWhere.id = auth.member.boothId;
+  const boothWhere: Prisma.BoothWhereInput = { deletedAt: null, ...areaBoothWhere(auth.area) };
   const rows = await prisma.booth.findMany({
     where: boothWhere,
     include: { mandal: true, assembly: true, district: true },
@@ -450,10 +508,12 @@ adminRouter.get('/verification', async (req, res) => {
   const auth = asAdmin(req);
   const items = await prisma.activity.findMany({
     where: {
+      deletedAt: null,
       status: { in: ['QUEUED', 'UPLOADED', 'PENDING_VERIFICATION'] },
-      booth: auth.member.isSuperAdmin || !auth.member.mandalId ? undefined : { mandalId: auth.member.mandalId },
+      actorId: { not: auth.member.id },
+      AND: [areaActivityWhere(auth.area)],
     },
-    include: { actor: { select: { fullName: true, membershipNumber: true } }, booth: true },
+    include: { actor: { select: { id: true, fullName: true, membershipNumber: true } }, booth: true },
     orderBy: [{ reviewFlag: 'desc' }, { occurredAt: 'desc' }],
     take: 60,
   });
@@ -464,18 +524,32 @@ adminRouter.get('/verification', async (req, res) => {
       status: row.status,
       occurredAt: row.occurredAt,
       notes: row.notes,
+      actorId: row.actor.id,
       actorName: row.actor.fullName,
       actorNumber: row.actor.membershipNumber,
-      boothName: row.booth.name,
+      boothName: row.booth?.name ?? null,
       reviewFlag: row.reviewFlag,
+      attendeeCount: row.attendeeCount,
+      homesCovered: row.homesCovered,
+      photoCount: row.photoCount,
+      distanceMetres: row.distanceMetres,
+      farAwayReason: row.farAwayReason,
     })),
   });
 });
 
+async function findReviewableActivity(auth: AdminRequest, id: string) {
+  const activity = await prisma.activity.findFirst({
+    where: { id, deletedAt: null, AND: [areaActivityWhere(auth.area)] },
+  });
+  if (!activity) throw notFound('Activity not found in your area');
+  if (activity.actorId === auth.member.id) throw forbidden('You cannot review your own activity');
+  return activity;
+}
+
 adminRouter.post('/verification/:id/accept', async (req, res) => {
   const auth = asAdmin(req);
-  const activity = await prisma.activity.findUnique({ where: { id: String(req.params.id) } });
-  if (!activity) throw notFound('Activity not found');
+  const activity = await findReviewableActivity(auth, String(req.params.id));
   const updated = await prisma.activity.update({
     where: { id: activity.id },
     data: { status: 'VERIFIED' },
@@ -493,8 +567,7 @@ adminRouter.post('/verification/:id/accept', async (req, res) => {
 adminRouter.post('/verification/:id/reject', async (req, res) => {
   const auth = asAdmin(req);
   const { reason } = rejectSchema.parse(req.body);
-  const activity = await prisma.activity.findUnique({ where: { id: String(req.params.id) } });
-  if (!activity) throw notFound('Activity not found');
+  const activity = await findReviewableActivity(auth, String(req.params.id));
   const updated = await prisma.activity.update({
     where: { id: activity.id },
     data: { status: 'NOT_VERIFIED' },

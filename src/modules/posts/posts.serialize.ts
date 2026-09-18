@@ -60,7 +60,8 @@ export function canSeePostAuthor(viewer: Pick<Member, 'id' | 'isSuperAdmin'>, vi
 }
 
 export function canAssignPostIssue(viewer: Pick<Member, 'id' | 'isSuperAdmin'>, viewerRank: number, author: AuthorRow) {
-  if (viewer.id === author.id) return false;
+  // An office bearer can hand their own grievance to someone below them.
+  if (viewer.id === author.id) return viewerRank > rankOf('MEMBER');
   return viewerRank > actorRank(author, author.posts);
 }
 

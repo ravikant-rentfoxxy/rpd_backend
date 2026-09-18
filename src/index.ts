@@ -1,10 +1,8 @@
-import { createApp } from './app.js';
+import app from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
 import { ensureStorage } from './lib/storage.js';
 import { logError } from './lib/logger.js';
-
-const app = createApp();
 
 const server = app.listen(env.PORT, '0.0.0.0', () => {
   console.log(`${env.APP_NAME} listening on http://localhost:${env.PORT}`);
