@@ -27,6 +27,9 @@ const schema = z.object({
   BUNNY_STREAM_API_KEY: z.string().min(1),
   BUNNY_STREAM_CDN_HOSTNAME: z.string().min(1),
   FIREBASE_SERVICE_ACCOUNT_PATH: z.string().optional(),
+  INTERAKT_API_KEY: z.string().optional(),
+  /** Name of the approved WhatsApp template used for sign-in codes. */
+  INTERAKT_OTP_TEMPLATE: z.string().default('otp_verification'),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 });

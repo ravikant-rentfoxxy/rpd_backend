@@ -7,12 +7,13 @@ import { prisma } from '../../lib/prisma.js';
 import { generateOtp, hashSecret, verifySecret } from '../../lib/crypto.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../lib/jwt.js';
 import { badRequest, forbidden, tooMany, unauthorized } from '../../lib/errors.js';
+import { sendOtpWhatsApp } from '../../lib/whatsapp.js';
 import { actorRank, POST_RANK, primaryPost } from './admin.posts.js';
 import { serializeAdminMember } from './admin.serialize.js';
 
 const mobileSchema = z.object({
   mobile: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a 10-digit Indian mobile number'),
-  channel: z.enum(['WHATSAPP', 'SMS']).default('SMS'),
+  channel: z.literal('WHATSAPP').default('WHATSAPP'),
 });
 
 const verifySchema = z.object({
@@ -105,6 +106,12 @@ adminAuthRouter.post('/otp/request', async (req, res) => {
     },
   });
   if (!isProd) console.info(`[admin-otp] ${mobileE164} → ${code}`);
+  try {
+    await sendOtpWhatsApp(mobileE164, code);
+  } catch (error) {
+    await prisma.otpChallenge.delete({ where: { id: challenge.id } }).catch(() => undefined);
+    throw error;
+  }
   return created(res, {
     challengeId: challenge.id,
     channel,

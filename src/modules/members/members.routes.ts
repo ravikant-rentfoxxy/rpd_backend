@@ -49,11 +49,18 @@ const registerSchema = registerFields.refine((value) => Boolean(value.boothId ||
   message: 'Select an assembly constituency',
 });
 
-const recruitSchema = registerFields.extend({
-  mobile: z.string().regex(/^[6-9]\d{9}$/),
-  pincode: z.string().regex(/^\d{6}$/),
-  stateId: z.string().uuid(),
-});
+// A recruiter signs someone up in person, so the form only asks for what the
+// recruiter can confirm on the spot. Date of birth and gender stay optional —
+// older app builds still send them, and the member can fill them in later.
+const recruitSchema = registerFields
+  .omit({ dateOfBirth: true, gender: true })
+  .extend({
+    dateOfBirth: isoDate.optional(),
+    gender: z.enum(['MALE', 'FEMALE', 'OTHER', 'UNDISCLOSED']).optional(),
+    mobile: z.string().regex(/^[6-9]\d{9}$/),
+    pincode: z.string().regex(/^\d{6}$/),
+    stateId: z.string().uuid(),
+  });
 
 const recruitGraph = {
   booth: true,
@@ -478,8 +485,9 @@ membersRouter.post('/recruit', validate(recruitSchema), async (req, res) => {
   const recruitStateId = state.id;
   const shared = {
     fullName: body.fullName,
-    dateOfBirth: parseIsoDate(body.dateOfBirth),
-    gender: body.gender,
+    // Left untouched when the recruiter did not supply them.
+    ...(body.dateOfBirth ? { dateOfBirth: parseIsoDate(body.dateOfBirth) } : {}),
+    ...(body.gender ? { gender: body.gender } : {}),
     locale: body.locale,
     boothId: booth?.id ?? null,
     mandalId: booth?.mandalId ?? auth.member.mandalId ?? null,

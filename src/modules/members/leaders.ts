@@ -5,10 +5,13 @@ import { labelOf, rankOf } from '../admin/admin.posts.js';
 
 type Area = { id: string; name: string; nameHi: string | null } | null;
 
+type ScopeKey = 'stateId' | 'regionId' | 'districtId' | 'assemblyId' | 'mandalId' | 'boothId';
+
 type Level = {
   level: 'NATIONAL' | 'STATE' | 'REGION' | 'DISTRICT' | 'ASSEMBLY' | 'MANDAL' | 'BOOTH';
   posts: PostType[];
-  scope: keyof Pick<Prisma.MemberPostWhereInput, 'stateId' | 'regionId' | 'districtId' | 'assemblyId' | 'mandalId' | 'boothId'> | null;
+  /** Area fields a leader's post is matched on, broadest first. */
+  scope: ScopeKey[];
   area: Area;
 };
 
@@ -42,31 +45,62 @@ export async function leadersPayload(member: Member) {
   ]);
   const boothArea: Area = booth ? { id: booth.id, name: `${booth.boothNumber} · ${booth.name}`, nameHi: null } : null;
 
+  const mine: Record<ScopeKey, string | null> = {
+    stateId: state?.id ?? null,
+    regionId: region?.id ?? null,
+    districtId: district?.id ?? null,
+    assemblyId: assembly?.id ?? null,
+    mandalId: mandal?.id ?? null,
+    boothId: booth?.id ?? null,
+  };
+
   const levels: Level[] = [
-    { level: 'NATIONAL', posts: ['NATIONAL_PRESIDENT', 'NATIONAL_GENERAL_SECRETARY'], scope: null, area: null },
-    { level: 'STATE', posts: ['STATE_PRESIDENT', 'STATE_GENERAL_SECRETARY'], scope: 'stateId', area: state },
-    { level: 'REGION', posts: ['REGIONAL_PRESIDENT'], scope: 'regionId', area: region },
+    { level: 'NATIONAL', posts: ['NATIONAL_PRESIDENT', 'NATIONAL_GENERAL_SECRETARY'], scope: [], area: null },
+    { level: 'STATE', posts: ['STATE_PRESIDENT', 'STATE_GENERAL_SECRETARY'], scope: ['stateId'], area: state },
+    { level: 'REGION', posts: ['REGIONAL_PRESIDENT'], scope: ['regionId'], area: region },
     {
       level: 'DISTRICT',
       posts: ['DISTRICT_PRESIDENT', 'DISTRICT_GENERAL_SECRETARY', 'DISTRICT_SECRETARY'],
-      scope: 'districtId',
+      scope: ['districtId'],
       area: district,
     },
-    { level: 'ASSEMBLY', posts: ['ASSEMBLY_IN_CHARGE'], scope: 'assemblyId', area: assembly },
-    { level: 'MANDAL', posts: ['MANDAL_PRESIDENT'], scope: 'mandalId', area: mandal },
-    { level: 'BOOTH', posts: ['BOOTH_ADHYAKSH', 'PANNA_PRAMUKH'], scope: 'boothId', area: boothArea },
+    { level: 'ASSEMBLY', posts: ['ASSEMBLY_IN_CHARGE'], scope: ['assemblyId'], area: assembly },
+    // Mandal and booth are often not filled in yet, so these fall back to the assembly.
+    { level: 'MANDAL', posts: ['MANDAL_PRESIDENT'], scope: ['assemblyId', 'mandalId'], area: mandal },
+    { level: 'BOOTH', posts: ['BOOTH_ADHYAKSH', 'PANNA_PRAMUKH'], scope: ['assemblyId', 'mandalId', 'boothId'], area: boothArea },
   ];
+
+  /**
+   * The broadest field the member knows must match exactly; narrower ones must match
+   * when both sides have them, and are ignored when the leader's post leaves them blank.
+   */
+  function levelWhere(row: Level): Prisma.MemberPostWhereInput | null {
+    const known = row.scope.filter((key) => mine[key]);
+    if (row.scope.length && !known.length) return null;
+    const [base, ...narrower] = known;
+    return {
+      post: { in: row.posts },
+      ...(base ? { [base]: mine[base] } : {}),
+      AND: narrower.map((key) => ({ OR: [{ [key]: mine[key] }, { [key]: null }] })),
+    };
+  }
+
+  function inLevel(row: Level, item: Record<ScopeKey, string | null> & { post: PostType }) {
+    if (!row.posts.includes(item.post)) return false;
+    const known = row.scope.filter((key) => mine[key]);
+    const [base, ...narrower] = known;
+    if (base && item[base] !== mine[base]) return false;
+    return narrower.every((key) => item[key] === null || item[key] === mine[key]);
+  }
+
   // Skip levels the member's address doesn't reach (e.g. no region mapped for their district).
-  const reachable = levels.filter((row) => row.scope === null || row.area);
+  const reachable = levels.filter((row) => levelWhere(row) !== null);
 
   const rows = await prisma.memberPost.findMany({
     where: {
       endedAt: null,
       member: { deletedAt: null },
-      OR: reachable.map((row) => ({
-        post: { in: row.posts },
-        ...(row.scope ? { [row.scope]: row.area!.id } : {}),
-      })),
+      OR: reachable.map((row) => levelWhere(row)!),
     },
     select: {
       post: true,
@@ -86,7 +120,7 @@ export async function leadersPayload(member: Member) {
     levels: reachable.map((row) => {
       const seen = new Set<string>();
       const leaders = rows
-        .filter((item) => row.posts.includes(item.post) && (!row.scope || item[row.scope] === row.area!.id))
+        .filter((item) => inLevel(row, item))
         .sort((a, b) => rankOf(b.post) - rankOf(a.post) || (a.pageNumber ?? 0) - (b.pageNumber ?? 0))
         .filter((item) => {
           const key = `${item.member.id}:${item.post}`;

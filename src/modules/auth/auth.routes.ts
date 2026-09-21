@@ -13,13 +13,14 @@ import { applySignupReferral, membershipNumberFromRowId } from '../../lib/member
 import { primaryPost } from '../admin/admin.posts.js';
 import { touchLastActive } from '../home/last-active.js';
 import { fcmTokenClear, fcmTokenWrite } from '../../lib/push.js';
+import { sendOtpWhatsApp } from '../../lib/whatsapp.js';
 
 const mobileSchema = z.object({
   mobile: z
     .string()
     .trim()
     .regex(/^[6-9]\d{9}$/, 'Enter a 10-digit Indian mobile number'),
-  channel: z.enum(['WHATSAPP', 'SMS']).default('WHATSAPP'),
+  channel: z.literal('WHATSAPP').default('WHATSAPP'),
 });
 
 const verifySchema = z.object({
@@ -111,6 +112,14 @@ authRouter.post('/otp/request', validate(mobileSchema), async (req, res) => {
 
   if (!isProd) {
     console.info(`[otp] ${mobileE164} → ${code}`);
+  }
+  // An undelivered code must not count against the per-hour cap, or a broken
+  // template would lock the member out of their own account.
+  try {
+    await sendOtpWhatsApp(mobileE164, code);
+  } catch (error) {
+    await prisma.otpChallenge.delete({ where: { id: challenge.id } }).catch(() => undefined);
+    throw error;
   }
 
   return created(res, {

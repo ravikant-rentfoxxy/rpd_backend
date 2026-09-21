@@ -36,8 +36,9 @@ homeRouter.get('/', async (req, res) => {
 
   const lastActiveAt = await touchLastActive(member.id);
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const nextMonthStart = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1);
 
-  const [tasksDue, ledger, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, meetingsHeld, issuesTimestamp, localBoard] = await Promise.all([
+  const [tasksDue, ledger, healthComponents, lastWork, nearbyCards, pannaAppointed, membersAdded, currentEvents, activitiesThisMonth, issuesTimestamp, localBoard] = await Promise.all([
     prisma.task.findMany({
       where: { assigneeId: member.id, status: { in: ['OPEN', 'IN_PROGRESS', 'OVERDUE'] } },
       include: { assigner: true },
@@ -73,8 +74,22 @@ homeRouter.get('/', async (req, res) => {
         })
       : Promise.resolve(0),
     prisma.member.count({ where: { recruitedById: member.id, status: { in: ['PENDING', 'VERIFIED'] } } }),
+    // Events the member joined that have not ended yet — same rule as GET /events/joined.
+    prisma.orgEvent.count({
+      where: {
+        deletedAt: null,
+        endsAt: { gt: new Date() },
+        joins: { some: { memberId: member.id } },
+      },
+    }),
+    // Work the member recorded this calendar month. Rejected entries do not count.
     prisma.activity.count({
-      where: { actorId: member.id, type: 'MEETING', status: { in: ['VERIFIED', 'PENDING_VERIFICATION', 'QUEUED'] } },
+      where: {
+        actorId: member.id,
+        deletedAt: null,
+        occurredAt: { gte: monthStart, lt: nextMonthStart },
+        status: { in: ['QUEUED', 'UPLOADED', 'PENDING_VERIFICATION', 'VERIFIED', 'APPEALED'] },
+      },
     }),
     issueSyncTimestamp(),
     localLeaderboardSnapshot(member),
@@ -107,7 +122,8 @@ homeRouter.get('/', async (req, res) => {
     member: serializeMember(member),
     stats: {
       membersAdded,
-      meetingsHeld,
+      currentEvents,
+      activitiesThisMonth,
       points,
       pendingPoints,
       mandalRank,

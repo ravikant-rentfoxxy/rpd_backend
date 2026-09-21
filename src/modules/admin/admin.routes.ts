@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { adminAuthRouter } from './admin.auth.routes.js';
 import { adminEngagementRouter } from './admin.engagement.routes.js';
+import { adminBlogRouter, adminVideoRouter } from './admin.content.routes.js';
 import { adminWorkRouter } from './admin.work.routes.js';
 import {
   areaActivityWhere,
@@ -76,6 +77,8 @@ export const adminRouter = Router();
 adminRouter.use('/auth', adminAuthRouter);
 adminRouter.use(requireAdmin);
 adminRouter.use('/engagement-events', adminEngagementRouter);
+adminRouter.use('/videos', adminVideoRouter);
+adminRouter.use('/blogs', adminBlogRouter);
 adminRouter.use(adminWorkRouter);
 
 adminRouter.get('/me', async (req, res) => {

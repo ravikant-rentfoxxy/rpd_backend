@@ -74,3 +74,34 @@ export const postMediaFields = postMediaUpload.fields([
   { name: 'thumbnail', maxCount: 1 },
   { name: 'document', maxCount: 1 },
 ]);
+
+const contentVideo = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
+
+/**
+ * Admin-published videos and blogs. One item per request, so the whole file is
+ * buffered in memory before it is forwarded to Bunny.
+ */
+export const contentMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024, files: 2 },
+  fileFilter: (_req, file, cb) => {
+    if (file.fieldname === 'thumbnail') {
+      if (file.mimetype.startsWith('image/') || file.mimetype === 'application/octet-stream') {
+        cb(null, true);
+        return;
+      }
+      cb(badRequest('Use a JPG, PNG or WebP thumbnail'));
+      return;
+    }
+    if (!contentVideo.has(file.mimetype) && file.mimetype !== 'application/octet-stream') {
+      cb(badRequest('Use an MP4, MOV, WebM or MKV video'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+export const contentMediaFields = contentMediaUpload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'thumbnail', maxCount: 1 },
+]);
